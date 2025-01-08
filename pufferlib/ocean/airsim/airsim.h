@@ -367,9 +367,11 @@ void process_actions(AirSim* sim) {
         #ifdef DEBUG_PRINT
             printf("Debug: Processing action %d, action %d\n", i, sim->actions[i]);
         #endif
-        //sim->lasers[i].engaging_threat = sim->actions[i];
-        // FIXME
-        sim->lasers[i].engaging_threat = 0;
+        // Only set engaging_threat if action is a valid threat index
+        if (sim->actions[i] >= 0 && sim->actions[i] < MAX_THREATS && 
+            sim->threats[sim->actions[i]].type > 0) {
+            sim->lasers[i].engaging_threat = sim->actions[i];
+        }
     }
 }
 

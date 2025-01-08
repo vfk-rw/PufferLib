@@ -18,6 +18,9 @@ typedef struct {
     bool show_debug;
     bool show_threat_paths;  // Add new toggle for threat paths
     bool show_laser[MAX_LASERS];  // Add laser visibility toggles
+    int active_laser;      // Currently selected laser
+    int selected_threat;   // Currently selected threat
+    bool laser_engaged;    // Whether the laser is engaged
     Camera2DEx camera;
 } GameState;
 
@@ -27,7 +30,34 @@ Vector2 world_to_screen(Camera2D* cam, float x, float y) {
     return GetWorldToScreen2D(world, *cam);
 }
 
-void draw_laser_arc(Camera2D* cam, AirSim* sim, int laser_idx) {
+// Add new function to draw threat selection bracket
+void draw_threat_bracket(Camera2D* cam, Vector2 pos, bool is_selected) {
+    float size = 20.0f;
+    Color color = is_selected ? BLACK : (Color){128, 128, 128, 128};
+    
+    // Draw selection bracket
+    DrawLineEx((Vector2){pos.x - size, pos.y - size}, 
+               (Vector2){pos.x - size/2, pos.y - size}, 2, color);
+    DrawLineEx((Vector2){pos.x - size, pos.y - size}, 
+               (Vector2){pos.x - size, pos.y - size/2}, 2, color);
+               
+    DrawLineEx((Vector2){pos.x + size, pos.y - size}, 
+               (Vector2){pos.x + size/2, pos.y - size}, 2, color);
+    DrawLineEx((Vector2){pos.x + size, pos.y - size}, 
+               (Vector2){pos.x + size, pos.y - size/2}, 2, color);
+               
+    DrawLineEx((Vector2){pos.x - size, pos.y + size}, 
+               (Vector2){pos.x - size/2, pos.y + size}, 2, color);
+    DrawLineEx((Vector2){pos.x - size, pos.y + size}, 
+               (Vector2){pos.x - size, pos.y + size/2}, 2, color);
+               
+    DrawLineEx((Vector2){pos.x + size, pos.y + size}, 
+               (Vector2){pos.x + size/2, pos.y + size}, 2, color);
+    DrawLineEx((Vector2){pos.x + size, pos.y + size}, 
+               (Vector2){pos.x + size, pos.y + size/2}, 2, color);
+}
+
+void draw_laser_arc(Camera2D* cam, AirSim* sim, int laser_idx, bool is_active) {
     Vector2 pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
     Laser* laser = &sim->lasers[laser_idx];
     
@@ -40,29 +70,35 @@ void draw_laser_arc(Camera2D* cam, AirSim* sim, int laser_idx) {
     float start_angle = az_rad - fov_rad;
     float end_angle = az_rad + fov_rad;
     
+    // Adjust transparency based on whether this is the active laser
+    Color fill_color = {0, 255, 255, is_active ? 32 : 8};
+    Color line_color = {0, 128, 255, is_active ? 255 : 64};
+    Color text_color = {0, 128, 255, is_active ? 255 : 64};
+    
     // Draw arc fill with transparency
     DrawCircleSector(pos, range, 
                     start_angle * RAD2DEG, 
                     end_angle * RAD2DEG, 
-                    32, (Color){0, 255, 255, 32});
+                    32, fill_color);
                     
     // Draw arc outline
     DrawCircleSectorLines(pos, range, 
                          start_angle * RAD2DEG, 
                          end_angle * RAD2DEG, 
-                         32, (Color){0, 128, 255, 255});
+                         32, line_color);
                          
     // Draw center line showing azimuth
     Vector2 end = {
         pos.x + cosf(az_rad) * range,
         pos.y + sinf(az_rad) * range
     };
-    DrawLineEx(pos, end, 2, (Color){0, 128, 255, 128});
+    DrawLineEx(pos, end, 2, (Color){0, 128, 255, is_active ? 128 : 32});
     
-    // Draw text showing elevation
-    DrawText(TextFormat("El: %.1f°", laser->el),
-            pos.x + 40, pos.y - 40 - laser_idx * 20, 
-            15, (Color){0, 128, 255, 255});
+    if (is_active) {
+        DrawText(TextFormat("El: %.1f°", laser->el),
+                pos.x + 40, pos.y - 40 - laser_idx * 20, 
+                15, text_color);
+    }
 }
 
 void draw_aircraft(Camera2D* cam, AirSim* sim, GameState* state) {
@@ -91,12 +127,12 @@ void draw_aircraft(Camera2D* cam, AirSim* sim, GameState* state) {
     // Draw active laser arcs
     for (int i = 0; i < MAX_LASERS; i++) {
         if (state->show_laser[i] && sim->lasers[i].type > 0) {
-            draw_laser_arc(cam, sim, i);
+            draw_laser_arc(cam, sim, i, i == state->active_laser);
         }
     }
 }
 
-void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths) {
+void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths, int selected_threat) {
     for (int i = 0; i < MAX_THREATS; i++) {
         if (sim->threats[i].type > 0) {
             Vector2 pos = world_to_screen(cam, sim->threats[i].x, sim->threats[i].y);
@@ -135,6 +171,11 @@ void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths) {
                         }
                     }
                 }
+            }
+            
+            // Draw selection bracket if this is the selected threat
+            if (i == selected_threat) {
+                draw_threat_bracket(cam, pos, true);
             }
         }
     }
@@ -188,6 +229,16 @@ void draw_hud(AirSim* sim, GameState* state) {
         }
     }
 
+    // Show laser control info
+    DrawText(TextFormat("Active Laser: %d  Selected Threat: %d  %s", 
+        state->active_laser + 1, 
+        state->selected_threat + 1,
+        state->laser_engaged ? "ENGAGED" : ""),
+        10, 80, 20, DARKGRAY);
+    
+    DrawText("Arrow Keys-Select Threat  ENTER-Engage Laser",
+        400, 80, 20, DARKGRAY);
+
     // Terminal state indicator remains the same
     if (sim->terminal) {
         const char* text = "TERMINAL STATE";
@@ -233,6 +284,19 @@ void update_camera(Camera2DEx* camera, AirSim* sim) {
     camera->cam.zoom += (camera->zoom_target - camera->cam.zoom) * 0.1f;
 }
 
+// Add helper function to find next/prev active threat
+int find_next_active_threat(AirSim* sim, int current, bool forward) {
+    for (int i = 0; i < MAX_THREATS; i++) {
+        int idx = forward ? 
+            (current + 1 + i) % MAX_THREATS : 
+            (current - 1 - i + MAX_THREATS) % MAX_THREATS;
+        if (sim->threats[idx].type > 0) {
+            return idx;
+        }
+    }
+    return current; // Keep current if no other active threats found
+}
+
 int main() {
     // Initialize simulation
     AirSim sim = {
@@ -256,14 +320,17 @@ int main() {
         .show_debug = false,
         .show_threat_paths = true, 
         .show_laser = {true, true, true, true, true},  // Start with all lasers visible
+        .active_laser = 0,
+        .selected_threat = 0,
+        .laser_engaged = false,
         .camera = {
             .cam = {
-                .zoom = PIXELS_PER_METER * 0.8f,  // Adjusted initial zoom
+                .zoom = PIXELS_PER_METER * 4.0f, // don't change this
                 .offset = {WINDOW_WIDTH/2, WINDOW_HEIGHT/2},
                 .rotation = 0.0f,
                 .target = {0, 0}
             },
-            .zoom_target = PIXELS_PER_METER * 0.8f,
+            .zoom_target = PIXELS_PER_METER * 4.0f,
         }
     };
 
@@ -280,6 +347,26 @@ int main() {
         for (int i = 0; i < MAX_LASERS; i++) {
             if (IsKeyPressed(KEY_ONE + i)) {
                 state.show_laser[i] = !state.show_laser[i];
+            }
+        }
+        
+        // Handle threat selection with arrow keys - only cycle through active threats
+        if (IsKeyPressed(KEY_RIGHT)) {
+            state.selected_threat = find_next_active_threat(&sim, state.selected_threat, true);
+        }
+        if (IsKeyPressed(KEY_LEFT)) {
+            state.selected_threat = find_next_active_threat(&sim, state.selected_threat, false);
+        }
+        
+        // Handle laser engagement with enter
+        if (IsKeyPressed(KEY_ENTER)) {
+            if (sim.threats[state.selected_threat].type > 0) {
+                state.laser_engaged = !state.laser_engaged;
+                if (state.laser_engaged) {
+                    sim.lasers[state.active_laser].engaging_threat = state.selected_threat;
+                } else {
+                    sim.lasers[state.active_laser].engaging_threat = -1;
+                }
             }
         }
         
@@ -303,7 +390,7 @@ int main() {
         BeginMode2D(state.camera.cam);
         draw_grid(&state.camera.cam, GRID_SIZE);
         draw_aircraft(&state.camera.cam, &sim, &state);  // Pass state to draw_aircraft
-        draw_threats(&state.camera.cam, &sim, state.show_threat_paths);  // Pass show_paths parameter
+        draw_threats(&state.camera.cam, &sim, state.show_threat_paths, state.selected_threat);  // Pass show_paths parameter
         EndMode2D();
         
         draw_hud(&sim, &state);
