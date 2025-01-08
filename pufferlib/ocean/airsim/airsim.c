@@ -31,9 +31,7 @@ void draw_aircraft(Camera2D* cam, AirSim* sim) {
     
     // Draw larger blue triangle pointing in x direction
     float size = 30.0f;  // Reduced size to be more reasonable
-    
-    // Draw a red dot at aircraft position for debugging
-    DrawCircleV(pos, 5.0f, RED);
+
     
     // Draw triangle relative to screen position
     Vector2 v1 = {pos.x + size, pos.y};
@@ -115,8 +113,10 @@ void draw_grid(Camera2D* cam, float grid_size) {
 }
 
 void draw_hud(AirSim* sim, GameState* state) {
-    DrawRectangle(0, 0, WINDOW_WIDTH, 60, (Color){255, 255, 255, 200});
+    // Make HUD background taller to accommodate controls
+    DrawRectangle(0, 0, WINDOW_WIDTH, 100, (Color){255, 255, 255, 200});
     
+    // Existing HUD info
     DrawText(TextFormat("Aircraft Pos: (%.0f, %.0f, %.0f)", 
         sim->aircraft_x, sim->aircraft_y, sim->aircraft_z), 10, 10, 20, BLACK);
     DrawText(TextFormat("Step: %d Time: %.1fs %s %s", 
@@ -124,8 +124,12 @@ void draw_hud(AirSim* sim, GameState* state) {
         state->paused ? "PAUSED" : "",
         sim->terminal ? "TERMINAL" : ""), 
         10, 35, 20, sim->terminal ? RED : BLACK);
+
+    // Add keyboard controls info
+    DrawText("SPACE-Pause  R-Reset  P-TogglePaths  TAB-Debug  MMB-Pan  Wheel-Zoom  ESC-Quit",
+        10, 60, 20, DARKGRAY);
         
-    // Draw large terminal indicator in center of screen when terminal
+    // Terminal state indicator remains the same
     if (sim->terminal) {
         const char* text = "TERMINAL STATE";
         int fontSize = 40;
