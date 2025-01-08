@@ -2,12 +2,13 @@
 #include <stdbool.h>
 #include <math.h>
 #include "raylib.h"
+#include <stdio.h> // Added to declare printf and fprintf
 
 #define MAX_THREATS 10
 #define MAX_LASERS 5
 #define PI 3.14159265358979323846f
 //#define DEBUG_TERMINAL
-#define DEBUG_PRINT
+//#define DEBUG_PRINT
 #define LOG_BUFFER_SIZE 1024
 
 typedef struct Log Log;
@@ -463,7 +464,7 @@ void reset(AirSim* sim) {
         float angle = ((float)i - 1.5f) * PI / 6.0f;  // Spread threats across 60 degrees
         sim->threats[i].x = sim->aircraft_x + sim->initial_distance + 500.0f * cosf(angle);
         sim->threats[i].y = sim->aircraft_y + sim->initial_distance * sinf(angle);
-        sim->threats[i].z = sim->aircraft_z + ((float)rand() / RAND_MAX - 0.5f) * 1000.0f;
+        sim->threats[i].z = sim->aircraft_z + ((float)rand() / (float)RAND_MAX - 0.5f) * 1000.0f;
         
         sim->threats[i].vx = 0.0f;
         sim->threats[i].vy = 0.0f;

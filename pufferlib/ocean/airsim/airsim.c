@@ -1,273 +1,240 @@
-#include <stdio.h>
 #include "airsim.h"
-#include "raylib.h"
+#include <stdio.h>
 
-#define VIEW_RADIUS 3000.0f  // How much of the grid to show around aircraft
-#define GRID_SPACING 500.0f  // Space between grid lines
-#define AIRCRAFT_SIZE 40.0f  // Size of aircraft triangle
-#define MIN_ZOOM 0.1f
-#define MAX_ZOOM 2.0f
-#define ZOOM_SPEED 0.1f
+// Window/display settings
+#define WINDOW_WIDTH 1024
+#define WINDOW_HEIGHT 768
+#define GRID_SIZE 100.0f  // Size of each grid square in meters
+#define PIXELS_PER_METER 0.1f // Scale for rendering
 
-// Adjust camera zoom calculation for proper scaling
-void setup_camera(Camera2D* camera) {
-    camera->offset = (Vector2){ GetScreenWidth()/2.0f, GetScreenHeight()/2.0f };
-    camera->rotation = 0.0f;
-    camera->zoom = 1.0f;  // Initialize zoom to default
+typedef struct Camera2DEx {
+    Camera2D cam;
+    float zoom_target;
+    Vector2 offset_target;
+} Camera2DEx;
+
+typedef struct {
+    bool paused;
+    bool show_debug;
+    bool show_threat_paths;  // Add new toggle for threat paths
+    Camera2DEx camera;
+} GameState;
+
+// Convert simulation coordinates to screen coordinates
+Vector2 world_to_screen(Camera2D* cam, float x, float y) {
+    Vector2 world = {x, y};
+    return GetWorldToScreen2D(world, *cam);
 }
 
-// New function to handle zoom with keyboard (e.g., Z to zoom in, X to zoom out)
-void handle_zoom(Camera2D* camera) {
-    if (IsKeyDown(KEY_Z)) {
-        camera->zoom += ZOOM_SPEED * GetFrameTime();
-        camera->zoom = Clamp(camera->zoom, MIN_ZOOM, MAX_ZOOM);
-    }
-    if (IsKeyDown(KEY_X)) {
-        camera->zoom -= ZOOM_SPEED * GetFrameTime();
-        camera->zoom = Clamp(camera->zoom, MIN_ZOOM, MAX_ZOOM);
-    }
-}
-
-// Convert world coordinates to screen coordinates
-Vector2 world_to_screen(Camera2D* camera, Vector2 world_pos) {
-    Vector2 screen_pos = GetScreenToWorld2D(world_pos, *camera);
-    return screen_pos;
-}
-
-void draw_grid(Camera2D* camera, Vector2 aircraft_pos) {
-    // Draw grid lines
-    for (float x = -VIEW_RADIUS; x <= VIEW_RADIUS; x += GRID_SPACING) {
-        Vector2 start = world_to_screen(camera, (Vector2){aircraft_pos.x + x, aircraft_pos.y - VIEW_RADIUS});
-        Vector2 end = world_to_screen(camera, (Vector2){aircraft_pos.x + x, aircraft_pos.y + VIEW_RADIUS});
-        DrawLineV(start, end, LIGHTGRAY);
-        
-        // Draw coordinate labels every 1000m
-        if (fmodf(x, 1000.0f) == 0) {
-            char text[32];
-            sprintf(text, "%.0fm", x);
-            DrawText(text, start.x + 5, camera->offset.y + 5, 10, DARKGRAY);
-        }
-    }
+void draw_aircraft(Camera2D* cam, AirSim* sim) {
+    Vector2 pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
     
-    for (float y = -VIEW_RADIUS; y <= VIEW_RADIUS; y += GRID_SPACING) {
-        Vector2 start = world_to_screen(camera, (Vector2){aircraft_pos.x - VIEW_RADIUS, aircraft_pos.y + y});
-        Vector2 end = world_to_screen(camera, (Vector2){aircraft_pos.x + VIEW_RADIUS, aircraft_pos.y + y});
-        DrawLineV(start, end, LIGHTGRAY);
-        
-        if (fmodf(y, 1000.0f) == 0) {
-            char text[32];
-            sprintf(text, "%.0fm", y);
-            DrawText(text, camera->offset.x + 5, start.y + 5, 10, DARKGRAY);
-        }
+    // Draw larger blue triangle pointing in x direction
+    float size = 30.0f;  // Reduced size to be more reasonable
+    
+    // Draw a red dot at aircraft position for debugging
+    DrawCircleV(pos, 5.0f, RED);
+    
+    // Draw triangle relative to screen position
+    Vector2 v1 = {pos.x + size, pos.y};
+    Vector2 v2 = {pos.x - size/2, pos.y + size/2};
+    Vector2 v3 = {pos.x - size/2, pos.y - size/2};
+    
+    DrawTriangle(v1, v2, v3, DARKBLUE);
+    
+    // Draw outline for better visibility
+    DrawTriangleLines(v1, v2, v3, BLUE);
+    
+    // Debug text showing position
+    if (IsKeyDown(KEY_TAB)) {
+        DrawText(TextFormat("Aircraft: (%.0f, %.0f)", pos.x, pos.y), 
+                pos.x + size, pos.y - size, 20, BLACK);
     }
 }
 
-void draw_aircraft(Camera2D* camera) {
-    // Aircraft is always at screen center, pointing right
-    Vector2 center = (Vector2){camera->offset.x, camera->offset.y};
-    Vector2 nose = (Vector2){center.x + AIRCRAFT_SIZE, center.y};
-    Vector2 tail_left = (Vector2){center.x - AIRCRAFT_SIZE/2, center.y - AIRCRAFT_SIZE/2};
-    Vector2 tail_right = (Vector2){center.x - AIRCRAFT_SIZE/2, center.y + AIRCRAFT_SIZE/2};
-    
-    DrawTriangle(nose, tail_left, tail_right, BLACK);
-}
-
-// New function to draw arrow pointing to off-grid threat
-void draw_off_grid_indicator(Camera2D* camera, Vector2 threat_pos, Vector2 aircraft_pos, Color color) {
-    // Get screen bounds
-    Vector2 screen_center = (Vector2){camera->offset.x, camera->offset.y};
-    float screen_radius = fminf(GetScreenWidth(), GetScreenHeight()) * 0.45f;
-    
-    // Calculate direction to threat
-    Vector2 dir = {
-        threat_pos.x - aircraft_pos.x,
-        threat_pos.y - aircraft_pos.y
-    };
-    float dist = sqrtf(dir.x * dir.x + dir.y * dir.y);
-    
-    // Normalize direction
-    dir.x /= dist;
-    dir.y /= dist;
-    
-    // Calculate arrow position on screen edge
-    Vector2 arrow_pos = {
-        screen_center.x + dir.x * screen_radius,
-        screen_center.y + dir.y * screen_radius
-    };
-    
-    // Draw arrow
-    float arrow_size = 20.0f;
-    float angle = atan2f(dir.y, dir.x);
-    
-    // Arrow body
-    DrawLineEx(arrow_pos, 
-              (Vector2){arrow_pos.x - dir.x * arrow_size, 
-                       arrow_pos.y - dir.y * arrow_size}, 
-              3.0f, color);
-    
-    // Arrow head
-    Vector2 left = {
-        arrow_pos.x - arrow_size * cosf(angle + PI/6),
-        arrow_pos.y - arrow_size * sinf(angle + PI/6)
-    };
-    Vector2 right = {
-        arrow_pos.x - arrow_size * cosf(angle - PI/6),
-        arrow_pos.y - arrow_size * sinf(angle - PI/6)
-    };
-    
-    DrawLineEx(arrow_pos, left, 3.0f, color);
-    DrawLineEx(arrow_pos, right, 3.0f, color);
-    
-    // Draw distance
-    DrawText(TextFormat("%.0fm", dist),
-            arrow_pos.x + dir.x * 25,
-            arrow_pos.y + dir.y * 25,
-            20, color);
-}
-
-void draw_threats(Camera2D* camera, AirSim* sim) {
-    Vector2 aircraft_pos = {sim->aircraft_x, sim->aircraft_y};
-    float view_bounds = VIEW_RADIUS / camera->zoom;
-    
+void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths) {
     for (int i = 0; i < MAX_THREATS; i++) {
         if (sim->threats[i].type > 0) {
-            Vector2 threat_pos = {sim->threats[i].x, sim->threats[i].y};
-            Color color = sim->threats[i].engaged ? RED : ORANGE;
+            Vector2 pos = world_to_screen(cam, sim->threats[i].x, sim->threats[i].y);
             
-            // Calculate distance
-            float dx = threat_pos.x - aircraft_pos.x;
-            float dy = threat_pos.y - aircraft_pos.y;
-            float dist = sqrtf(dx*dx + dy*dy);
+            // Draw threat dot
+            DrawCircleV(pos, 5.0f, RED);
             
-            if (dist <= view_bounds) {
-                // Draw threat normally if in bounds
-                Vector2 screen_pos = world_to_screen(camera, threat_pos);
-                DrawCircleV(screen_pos, 5.0f, color);
-                DrawText(TextFormat("T%d: %.0fm", i, dist), 
-                        screen_pos.x + 10, screen_pos.y - 10, 20, color);
-                
-                // Draw targeting bracket if engaged
-                for (int j = 0; j < MAX_LASERS; j++) {
-                    if (sim->lasers[j].engaging_threat == i) {
-                        DrawRectangleLines(
-                            screen_pos.x - 10, screen_pos.y - 10,
-                            20, 20, BLACK);
-                        break;
+            // Draw range to aircraft with larger text
+            float dist = compute_distance(
+                sim->threats[i].x, sim->threats[i].y, sim->threats[i].z,
+                sim->aircraft_x, sim->aircraft_y, sim->aircraft_z
+            );
+            DrawText(TextFormat("%.0fm", dist), pos.x + 10, pos.y - 15, 25, BLACK);  // Increased size to 25
+            
+            // Draw engagement radius
+            float radius = sim->threats[i].engagement_radius * cam->zoom;
+            DrawCircleLines(pos.x, pos.y, radius, RED);
+
+            // Draw dotted line path to aircraft if enabled
+            if (show_paths) {
+                Vector2 aircraft_pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
+                float dx = aircraft_pos.x - pos.x;
+                float dy = aircraft_pos.y - pos.y;
+                float len = sqrtf(dx*dx + dy*dy);
+                if (len > 0) {
+                    dx /= len;
+                    dy /= len;
+                    for (float d = 0; d < len; d += 20.0f) {
+                        if ((int)(d/20.0f) % 2 == 0) {  // Draw every other segment
+                            DrawLineEx(
+                                (Vector2){pos.x + dx*d, pos.y + dy*d},
+                                (Vector2){pos.x + dx*(d+10.0f), pos.y + dy*(d+10.0f)},
+                                2,
+                                RED
+                            );
+                        }
                     }
                 }
-            } else {
-                // Draw off-grid indicator for threats outside view
-                draw_off_grid_indicator(camera, threat_pos, aircraft_pos, color);
             }
         }
     }
 }
 
-void draw_hud(AirSim* sim, bool paused) {
-    int y = 10;
-    DrawText(TextFormat("Time: %.2f", sim->time), 10, y, 20, BLACK); y += 25;
-    DrawText(TextFormat("Aircraft: (%.0f, %.0f, %.0f)", 
-            sim->aircraft_x, sim->aircraft_y, sim->aircraft_z), 10, y, 20, BLACK); y += 25;
+void draw_grid(Camera2D* cam, float grid_size) {
+    Vector2 screen_center = GetScreenToWorld2D((Vector2){WINDOW_WIDTH/2, WINDOW_HEIGHT/2}, *cam);
+    int grid_cells = 50;
     
-    // Show laser status
-    DrawText("Laser Status:", 10, y, 20, BLACK); y += 25;
-    for (int i = 0; i < MAX_LASERS; i++) {
-        const char* status = sim->lasers[i].engaging_threat >= 0 ? 
-            TextFormat("Engaging T%d", sim->lasers[i].engaging_threat) : "No Target";
-        DrawText(TextFormat("L%d: %s", i, status), 20, y, 20, BLACK);
-        y += 20;
-    }
+    float start_x = screen_center.x - (grid_cells/2) * grid_size;
+    float start_y = screen_center.y - (grid_cells/2) * grid_size;
     
-    // Controls
-    y += 10;
-    DrawText("SPACE: Reset  |  P: Pause  |  LEFT/RIGHT: Target", 10, y, 20, BLACK);
-    if (paused) {
-        DrawText("PAUSED", GetScreenWidth()/2 - 50, 30, 30, RED);
+    for (int i = 0; i <= grid_cells; i++) {
+        Vector2 v1 = world_to_screen(cam, start_x + i*grid_size, start_y);
+        Vector2 v2 = world_to_screen(cam, start_x + i*grid_size, start_y + grid_cells*grid_size);
+        Vector2 h1 = world_to_screen(cam, start_x, start_y + i*grid_size);
+        Vector2 h2 = world_to_screen(cam, start_x + grid_cells*grid_size, start_y + i*grid_size);
+        
+        DrawLineV(v1, v2, (Color){200, 200, 200, 64});
+        DrawLineV(h1, h2, (Color){200, 200, 200, 64});
     }
 }
 
-void render_scene(AirSim* sim, Camera2D* camera, bool paused) {
-    BeginDrawing();
-    ClearBackground(RAYWHITE);
+void draw_hud(AirSim* sim, GameState* state) {
+    DrawRectangle(0, 0, WINDOW_WIDTH, 60, (Color){255, 255, 255, 200});
     
-    handle_zoom(camera);  // Handle zoom input each frame
-    
-    BeginMode2D(*camera);
-    
-    // Update camera to center on aircraft
-    camera->target = (Vector2){sim->aircraft_x, sim->aircraft_y};
-    
-    draw_grid(camera, (Vector2){sim->aircraft_x, sim->aircraft_y});
-    draw_aircraft(camera);
-    draw_threats(camera, sim);
-    
-    EndMode2D();
-    
-    draw_hud(sim, paused);
-    
+    DrawText(TextFormat("Aircraft Pos: (%.0f, %.0f, %.0f)", 
+        sim->aircraft_x, sim->aircraft_y, sim->aircraft_z), 10, 10, 20, BLACK);
+    DrawText(TextFormat("Step: %d Time: %.1fs %s %s", 
+        sim->steps, sim->time, 
+        state->paused ? "PAUSED" : "",
+        sim->terminal ? "TERMINAL" : ""), 
+        10, 35, 20, sim->terminal ? RED : BLACK);
+        
+    // Draw large terminal indicator in center of screen when terminal
     if (sim->terminal) {
-        DrawText("SIMULATION ENDED", 
-                GetScreenWidth()/2 - 100, 
-                GetScreenHeight()/2, 
-                30, RED);
+        const char* text = "TERMINAL STATE";
+        int fontSize = 40;
+        int textWidth = MeasureText(text, fontSize);
+        DrawText(text, 
+            (WINDOW_WIDTH - textWidth)/2,
+            WINDOW_HEIGHT/2 - fontSize/2,
+            fontSize, RED);
+    }
+}
+
+void update_camera(Camera2DEx* camera, AirSim* sim) {
+    // Add panning with middle mouse button
+    if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE)) {
+        Vector2 delta = GetMouseDelta();
+        camera->cam.offset.x += delta.x;
+        camera->cam.offset.y += delta.y;
+        camera->offset_target = camera->cam.offset;
+    } else {
+        // Smoothly track aircraft
+        camera->offset_target = (Vector2){
+            WINDOW_WIDTH/2 - sim->aircraft_x * camera->cam.zoom,
+            WINDOW_HEIGHT/2 - sim->aircraft_y * camera->cam.zoom
+        };
+        
+        camera->cam.offset.x += (camera->offset_target.x - camera->cam.offset.x) * 0.1f;
+        camera->cam.offset.y += (camera->offset_target.y - camera->cam.offset.y) * 0.1f;
     }
     
-    EndDrawing();
+    // Handle zoom with mouse wheel
+    float wheel = GetMouseWheelMove();
+    if (wheel != 0) {
+        camera->zoom_target *= (1.0f + wheel * 0.1f);
+        camera->zoom_target = fmaxf(0.1f, fminf(camera->zoom_target, 10.0f));
+    }
+    
+    camera->cam.zoom += (camera->zoom_target - camera->cam.zoom) * 0.1f;
 }
 
 int main() {
-    InitWindow(1280, 720, "AirSim Test");
-    SetTargetFPS(60);
-    
-    Camera2D camera = {0};
-    setup_camera(&camera);
-    
     // Initialize simulation
-    AirSim* sim = (AirSim*)calloc(1, sizeof(AirSim));
-    if (!sim) {
-        printf("Failed to allocate simulation\n");
-        return 1;
-    }
+    AirSim sim = {
+        .initial_distance = 1000.0f,  // Reduced from 2000.0f
+        .aircraft_speed = 100.0f,
+        .threat_acceleration = 400.0f,
+        .threat_max_velocity = 1000.0f,
+        .engagement_radius = 2500.0f,
+        .dt = 0.016f,          // ~60 FPS
+        .max_time = 60.0f,
+        .max_steps = 6000,
+    };
+    allocate(&sim);
 
-    sim->initial_distance = 2000.0f;
-    sim->aircraft_speed = 100.0f;
-    sim->threat_acceleration = 400.0f;
-    sim->threat_max_velocity = 1000.0f;
-    sim->engagement_radius = 2500.0f;
-    sim->dt = 0.016f;
-    sim->max_time = 60.0f;
-    sim->max_steps = 3600;
+    // Initialize window and renderer
+    InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "AirSim Visualizer");
+    SetTargetFPS(60);
 
-    allocate(sim);
-    reset(sim);
-    
-    bool paused = false;
+    GameState state = {
+        .paused = true,
+        .show_debug = false,
+        .show_threat_paths = false,  // Initialize new toggle
+        .camera = {
+            .cam = {
+                .zoom = PIXELS_PER_METER * 0.5f,  // Start more zoomed out to see everything
+                .offset = {WINDOW_WIDTH/2, WINDOW_HEIGHT/2},
+                .rotation = 0.0f,
+                .target = {0, 0}
+            },
+            .zoom_target = PIXELS_PER_METER * 0.5f,
+        }
+    };
+
+    reset(&sim);
 
     while (!WindowShouldClose()) {
         // Input handling
-        if (IsKeyPressed(KEY_SPACE)) reset(sim);
-        if (IsKeyPressed(KEY_P)) paused = !paused;
+        if (IsKeyPressed(KEY_SPACE)) state.paused = !state.paused;
+        if (IsKeyPressed(KEY_R)) reset(&sim);
+        if (IsKeyPressed(KEY_TAB)) state.show_debug = !state.show_debug;
+        if (IsKeyPressed(KEY_P)) state.show_threat_paths = !state.show_threat_paths;  // Add 'P' key toggle
         
-        // Zoom controls
-        float wheel = GetMouseWheelMove();
-        if (wheel != 0) {
-            camera.zoom = Clamp(camera.zoom + wheel * ZOOM_SPEED, MIN_ZOOM, MAX_ZOOM);
+        // Update simulation if not paused and not terminal
+        if (!state.paused && !sim.terminal) {
+            step(&sim);
         }
         
-        if (!paused) {
-            // Manual laser targeting
-            sim->actions[0] = -1;
-            if (IsKeyDown(KEY_LEFT)) sim->actions[0] = 0;
-            if (IsKeyDown(KEY_RIGHT)) sim->actions[0] = 1;
-            
-            step(sim);
+        // Pause simulation when terminal state is reached
+        if (sim.terminal) {
+            state.paused = true;
         }
+
+        // Update camera
+        update_camera(&state.camera, &sim);
+
+        // Render
+        BeginDrawing();
+        ClearBackground(WHITE);  // Changed from BLACK
         
-        render_scene(sim, &camera, paused);
+        BeginMode2D(state.camera.cam);
+        draw_grid(&state.camera.cam, GRID_SIZE);
+        draw_aircraft(&state.camera.cam, &sim);
+        draw_threats(&state.camera.cam, &sim, state.show_threat_paths);  // Pass show_paths parameter
+        EndMode2D();
+        
+        draw_hud(&sim, &state);
+        EndDrawing();
     }
 
-    free_allocated(sim);
-    free(sim);
+    free_allocated(&sim);
     CloseWindow();
     return 0;
 }
