@@ -17,6 +17,7 @@ typedef struct {
     bool paused;
     bool show_debug;
     bool show_threat_paths;  // Add new toggle for threat paths
+    bool show_laser[MAX_LASERS];  // Add laser visibility toggles
     Camera2DEx camera;
 } GameState;
 
@@ -26,7 +27,45 @@ Vector2 world_to_screen(Camera2D* cam, float x, float y) {
     return GetWorldToScreen2D(world, *cam);
 }
 
-void draw_aircraft(Camera2D* cam, AirSim* sim) {
+void draw_laser_arc(Camera2D* cam, AirSim* sim, int laser_idx) {
+    Vector2 pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
+    Laser* laser = &sim->lasers[laser_idx];
+    
+    // Convert angles to radians
+    float az_rad = laser->az * PI / 180.0f;
+    float fov_rad = laser->fov * PI / 180.0f;
+    float range = laser->maximum_range * cam->zoom;
+    
+    // Draw laser arc
+    float start_angle = az_rad - fov_rad;
+    float end_angle = az_rad + fov_rad;
+    
+    // Draw arc fill with transparency
+    DrawCircleSector(pos, range, 
+                    start_angle * RAD2DEG, 
+                    end_angle * RAD2DEG, 
+                    32, (Color){0, 255, 255, 32});
+                    
+    // Draw arc outline
+    DrawCircleSectorLines(pos, range, 
+                         start_angle * RAD2DEG, 
+                         end_angle * RAD2DEG, 
+                         32, (Color){0, 128, 255, 255});
+                         
+    // Draw center line showing azimuth
+    Vector2 end = {
+        pos.x + cosf(az_rad) * range,
+        pos.y + sinf(az_rad) * range
+    };
+    DrawLineEx(pos, end, 2, (Color){0, 128, 255, 128});
+    
+    // Draw text showing elevation
+    DrawText(TextFormat("El: %.1f°", laser->el),
+            pos.x + 40, pos.y - 40 - laser_idx * 20, 
+            15, (Color){0, 128, 255, 255});
+}
+
+void draw_aircraft(Camera2D* cam, AirSim* sim, GameState* state) {
     Vector2 pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
     
     // Draw larger blue triangle pointing in x direction
@@ -47,6 +86,13 @@ void draw_aircraft(Camera2D* cam, AirSim* sim) {
     if (IsKeyDown(KEY_TAB)) {
         DrawText(TextFormat("Aircraft: (%.0f, %.0f)", pos.x, pos.y), 
                 pos.x + size, pos.y - size, 20, BLACK);
+    }
+
+    // Draw active laser arcs
+    for (int i = 0; i < MAX_LASERS; i++) {
+        if (state->show_laser[i] && sim->lasers[i].type > 0) {
+            draw_laser_arc(cam, sim, i);
+        }
     }
 }
 
@@ -129,6 +175,19 @@ void draw_hud(AirSim* sim, GameState* state) {
     DrawText("SPACE-Pause  R-Reset  P-TogglePaths  TAB-Debug  MMB-Pan  Wheel-Zoom  ESC-Quit",
         10, 60, 20, DARKGRAY);
         
+    // Add laser status to controls line
+    DrawText("1-5:ToggleLasers ", 
+        10, 80, 20, DARKGRAY);
+    
+    // Show laser states
+    for (int i = 0; i < MAX_LASERS; i++) {
+        if (sim->lasers[i].type > 0) {
+            Color color = state->show_laser[i] ? BLUE : DARKGRAY;
+            DrawText(TextFormat("L%d", i+1), 
+                    200 + i*40, 80, 20, color);
+        }
+    }
+
     // Terminal state indicator remains the same
     if (sim->terminal) {
         const char* text = "TERMINAL STATE";
@@ -149,14 +208,19 @@ void update_camera(Camera2DEx* camera, AirSim* sim) {
         camera->cam.offset.y += delta.y;
         camera->offset_target = camera->cam.offset;
     } else {
-        // Smoothly track aircraft
+        // Center aircraft on screen
         camera->offset_target = (Vector2){
-            WINDOW_WIDTH/2 - sim->aircraft_x * camera->cam.zoom,
-            WINDOW_HEIGHT/2 - sim->aircraft_y * camera->cam.zoom
+            WINDOW_WIDTH/2,  // Center x
+            WINDOW_HEIGHT/2  // Center y
         };
         
-        camera->cam.offset.x += (camera->offset_target.x - camera->cam.offset.x) * 0.1f;
-        camera->cam.offset.y += (camera->offset_target.y - camera->cam.offset.y) * 0.1f;
+        camera->cam.target = (Vector2){
+            sim->aircraft_x,
+            sim->aircraft_y
+        };
+        
+        //camera->cam.offset.x += (camera->offset_target.x - camera->cam.offset.x) * 0.1f;
+        //camera->cam.offset.y += (camera->offset_target.y - camera->cam.offset.y) * 0.1f;
     }
     
     // Handle zoom with mouse wheel
@@ -190,15 +254,16 @@ int main() {
     GameState state = {
         .paused = true,
         .show_debug = false,
-        .show_threat_paths = false,  // Initialize new toggle
+        .show_threat_paths = true, 
+        .show_laser = {true, true, true, true, true},  // Start with all lasers visible
         .camera = {
             .cam = {
-                .zoom = PIXELS_PER_METER * 0.5f,  // Start more zoomed out to see everything
+                .zoom = PIXELS_PER_METER * 0.8f,  // Adjusted initial zoom
                 .offset = {WINDOW_WIDTH/2, WINDOW_HEIGHT/2},
                 .rotation = 0.0f,
                 .target = {0, 0}
             },
-            .zoom_target = PIXELS_PER_METER * 0.5f,
+            .zoom_target = PIXELS_PER_METER * 0.8f,
         }
     };
 
@@ -210,6 +275,13 @@ int main() {
         if (IsKeyPressed(KEY_R)) reset(&sim);
         if (IsKeyPressed(KEY_TAB)) state.show_debug = !state.show_debug;
         if (IsKeyPressed(KEY_P)) state.show_threat_paths = !state.show_threat_paths;  // Add 'P' key toggle
+        
+        // Handle laser toggles (keys 1-5)
+        for (int i = 0; i < MAX_LASERS; i++) {
+            if (IsKeyPressed(KEY_ONE + i)) {
+                state.show_laser[i] = !state.show_laser[i];
+            }
+        }
         
         // Update simulation if not paused and not terminal
         if (!state.paused && !sim.terminal) {
@@ -230,7 +302,7 @@ int main() {
         
         BeginMode2D(state.camera.cam);
         draw_grid(&state.camera.cam, GRID_SIZE);
-        draw_aircraft(&state.camera.cam, &sim);
+        draw_aircraft(&state.camera.cam, &sim, &state);  // Pass state to draw_aircraft
         draw_threats(&state.camera.cam, &sim, state.show_threat_paths);  // Pass show_paths parameter
         EndMode2D();
         
