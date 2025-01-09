@@ -14,6 +14,9 @@
 #define RAD2DEG_SAFE 57.2957795131f  // 180/pi
 #define DEG2RAD_SAFE 0.0174532925f   // pi/180
 
+#include "log.h"
+
+
 typedef struct Threat {
     int type;
     bool engaged;
@@ -74,7 +77,6 @@ typedef struct AirSim {
     Log log;
 } AirSim;
 
-#include "log.h"
 
 // Helper functions
 float compute_distance(float x1, float y1, float z1, float x2, float y2, float z2) {
