@@ -75,7 +75,7 @@ class AirDefense(pufferlib.PufferEnv):
         self.c_envs.close()
 
 
-def test_performance(num_envs=1, timeout=10, action_cache_size=1024):
+def test_performance(num_envs=1024, timeout=10, action_cache_size=2048):
     env = AirDefense(num_envs=num_envs)
     env.reset()
     tick = 0
@@ -130,7 +130,7 @@ def test_sim(ticks=2980, action_cache_size=1024):
 
         obs, reward, term, trunc, info = env.step(actions=[0])
 
-        if tick % 10 == 0:
+        if tick % 100 == 0:
             print(f"\nTick {tick}")
             print(
                 f"Aircraft: ({obs[0,0]:.0f}, {obs[0,1]:.0f}, {obs[0,2]:.0f}) term: {term}"
@@ -152,5 +152,5 @@ def test_sim(ticks=2980, action_cache_size=1024):
 if __name__ == "__main__":
     print("Running performance test...")
     test_performance()
-    # print("\nRunning simulation test...")
-    # test_sim()
+    #print("\nRunning simulation test...")
+    #test_sim()
