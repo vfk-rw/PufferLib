@@ -18,8 +18,29 @@ cdef extern from "airsim.h":
     void free_logbuffer(LogBuffer*)
     Log aggregate_and_clear(LogBuffer*)
 
-    ctypedef struct Threat
-    ctypedef struct Laser
+    ctypedef struct Threat:
+        int type
+        bint engaged
+        float x, y, z
+        float vx, vy, vz
+        float az, el
+        float fov
+        float track_rate
+        float guidance_gain
+        float engagement_radius
+        float lethal_radius
+        float acceleration
+        float max_velocity
+        float lifetime
+
+    ctypedef struct Laser:
+        int type
+        int engaging_threat
+        float az, el
+        float track_rate
+        float fov
+        float guidance_reduction
+        float maximum_range
     
     ctypedef struct AirSim:
         float initial_distance

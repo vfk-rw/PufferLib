@@ -144,13 +144,26 @@ def test_sim(ticks=2980, action_cache_size=1024):
                     print(
                         f"Threat {i}: ({pos[0]:.0f}, {pos[1]:.0f}, {pos[2]:.0f}), Distance: {dist:.0f}"
                     )
+
+            # Print active lasers and their targets
+            for i in range(5):
+                offset = 6 + 10 * 8 + i * 4
+                laser_type = obs[0, offset]
+                if laser_type > 0:
+                    target = obs[0, offset + 1]
+                    az = obs[0, offset + 2]
+                    el = obs[0, offset + 3]
+                    print(
+                        f"Laser {i}: targeting threat {target:.0f} (az: {az:.2f}, el: {el:.2f})"
+                    )
+
             if term or trunc:
                 print("Simulation ended")
                 break
 
 
 if __name__ == "__main__":
-    print("Running performance test...")
-    test_performance()
-    #print("\nRunning simulation test...")
-    #test_sim()
+    # print("Running performance test...")
+    # test_performance()
+    print("\nRunning simulation test...")
+    test_sim()

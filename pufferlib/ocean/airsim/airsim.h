@@ -10,6 +10,9 @@
 //#define DEBUG_TERMINAL
 //#define DEBUG_PRINT
 #define LOG_BUFFER_SIZE 1024
+#define MAX_SEEKER_ERROR_SCALE 30.0f  // Make error much larger for visibility
+#define RAD2DEG_SAFE 57.2957795131f  // 180/pi
+#define DEG2RAD_SAFE 0.0174532925f   // pi/180
 
 typedef struct Log Log;
 struct Log {
@@ -67,7 +70,10 @@ typedef struct Threat {
     bool engaged;              // True if threat is launched
     float x, y, z;            // Position (meters)
     float vx, vy, vz;         // Velocity (m/s)
-    int hp;                   // Health points
+    float az, el;             // Seeker pointing angles (degrees)
+    float fov;                // Field of view (degrees)
+    float track_rate;         // Base angular tracking rate (deg/s)
+    float guidance_gain;      // Current guidance gain (1.0 = full, 0.0 = none)
     float engagement_radius;   // Meters
     float lethal_radius;      // Meters
     float acceleration;       // m/s^2
@@ -79,11 +85,11 @@ typedef struct Threat {
 typedef struct Laser {
     int type;                 // 0 for inactive, 1+ for active
     int engaging_threat;      // -1: not engaging, 0+: threat index
-    float az;                 // Azimuth (degrees)
-    float el;                 // Elevation (degrees)
+    float az;                // Azimuth (degrees)
+    float el;                // Elevation (degrees)
     float track_rate;         // Degrees/second
     float fov;                // Field of view (degrees)
-    float damage_per_second;  // Damage rate
+    float guidance_reduction; // Guidance reduction rate per second
     float maximum_range;      // Maximum effective range (meters)
 } Laser;
 
@@ -137,9 +143,9 @@ void compute_angles_to_target(float x1, float y1, float z1,
     float dy = y2 - y1;
     float dz = z2 - z1;
     
-    *az = atan2f(dy, dx) * 180.0f / PI;
+    *az = atan2f(dy, dx) * RAD2DEG_SAFE;
     float ground_distance = sqrtf(dx*dx + dy*dy);
-    *el = atan2f(dz, ground_distance) * 180.0f / PI;
+    *el = atan2f(dz, ground_distance) * RAD2DEG_SAFE;
 }
 
 // Core simulation functions
@@ -177,42 +183,77 @@ void engage_threats(AirSim* sim) {
 void step_threats(AirSim* sim) {
     for (int i = 0; i < MAX_THREATS; i++) {
         if (sim->threats[i].type > 0 && sim->threats[i].engaged) {
-            // Pro-nav guidance towards aircraft
-            float dist = compute_distance(
+            // Get true angle to aircraft
+            float true_az, true_el;
+            compute_angles_to_target(
                 sim->threats[i].x, sim->threats[i].y, sim->threats[i].z,
-                sim->aircraft_x, sim->aircraft_y, sim->aircraft_z
+                sim->aircraft_x, sim->aircraft_y, sim->aircraft_z,
+                &true_az, &true_el
             );
             
-            float lead_time = dist / (sim->threats[i].max_velocity + 1e-6f);
-            float target_x = sim->aircraft_x + sim->aircraft_vx * lead_time;
-            float target_y = sim->aircraft_y + sim->aircraft_vy * lead_time;
-            float target_z = sim->aircraft_z + sim->aircraft_vz * lead_time;
+            // Add error based on guidance_gain
+            float error_scale = (1.0f - sim->threats[i].guidance_gain) * MAX_SEEKER_ERROR_SCALE;
+            float error = error_scale * sinf(sim->time * 2.0f);  // Oscillating error
             
-            float dx = target_x - sim->threats[i].x;
-            float dy = target_y - sim->threats[i].y;
-            float dz = target_z - sim->threats[i].z;
-            float norm = sqrtf(dx*dx + dy*dy + dz*dz) + 1e-6f;
+            // Only apply error to azimuth for now
+            float apparent_az = true_az + error;
+            float apparent_el = true_el;  // No elevation error yet
             
+            // Update seeker head angles with track rate limit
+            float max_turn = sim->threats[i].track_rate * sim->dt;
+            
+            // Calculate shortest angle difference for azimuth
+            float az_diff = fmodf(apparent_az - sim->threats[i].az + 540.0f, 360.0f) - 180.0f;
+            float el_diff = apparent_el - sim->threats[i].el;
+            
+            if (az_diff > max_turn) az_diff = max_turn;
+            if (az_diff < -max_turn) az_diff = -max_turn;
+            if (el_diff > max_turn) el_diff = max_turn;
+            if (el_diff < -max_turn) el_diff = -max_turn;
+            
+            // Update angles
+            sim->threats[i].az = fmodf(sim->threats[i].az + az_diff + 360.0f, 360.0f);
+            sim->threats[i].el = fminf(89.0f, fmaxf(-89.0f, sim->threats[i].el + el_diff));
+            
+            // Always accelerate in direction of seeker head
+            float az_rad = sim->threats[i].az * DEG2RAD_SAFE;
+            float el_rad = sim->threats[i].el * DEG2RAD_SAFE;
+            
+            float ground_comp = cosf(el_rad);
+            float dir_x = ground_comp * cosf(az_rad);
+            float dir_y = ground_comp * sinf(az_rad);
+            float dir_z = sinf(el_rad);
+            
+            // Full acceleration always
+            sim->threats[i].vx += sim->threats[i].acceleration * dir_x * sim->dt;
+            sim->threats[i].vy += sim->threats[i].acceleration * dir_y * sim->dt;
+            sim->threats[i].vz += sim->threats[i].acceleration * dir_z * sim->dt;
+            
+            // Limit velocity magnitude
             float current_velocity = sqrtf(
                 sim->threats[i].vx * sim->threats[i].vx +
                 sim->threats[i].vy * sim->threats[i].vy +
                 sim->threats[i].vz * sim->threats[i].vz
             );
             
-            float accel_scale = fminf(
-                sim->threats[i].acceleration,
-                (sim->threats[i].max_velocity - current_velocity) / sim->dt
-            );
+            if (current_velocity > sim->threats[i].max_velocity) {
+                float scale = sim->threats[i].max_velocity / current_velocity;
+                sim->threats[i].vx *= scale;
+                sim->threats[i].vy *= scale;
+                sim->threats[i].vz *= scale;
+            }
             
-            // Update velocities
-            sim->threats[i].vx += accel_scale * dx / norm * sim->dt;
-            sim->threats[i].vy += accel_scale * dy / norm * sim->dt;
-            sim->threats[i].vz += accel_scale * dz / norm * sim->dt;
-            
-            // Update positions
+            // Update position
             sim->threats[i].x += sim->threats[i].vx * sim->dt;
             sim->threats[i].y += sim->threats[i].vy * sim->dt;
             sim->threats[i].z += sim->threats[i].vz * sim->dt;
+            
+            // Check for ground collision
+            if (sim->threats[i].z <= 0.0f) {
+                sim->threats[i].type = 0;  // Deactivate threat
+                sim->threats[i].lifetime = 0.0f;
+                continue;
+            }
             
             // Update lifetime
             sim->threats[i].lifetime -= sim->dt;
@@ -268,7 +309,8 @@ void slew_lasers(AirSim* sim) {
     }
 }
 
-void apply_damage(AirSim* sim) {
+// Rename apply_damage to apply_countermeasures
+void apply_countermeasures(AirSim* sim) {
     for (int i = 0; i < MAX_LASERS; i++) {
         if (sim->lasers[i].type > 0 && sim->lasers[i].engaging_threat >= 0) {
             int threat_idx = sim->lasers[i].engaging_threat;
@@ -291,10 +333,10 @@ void apply_damage(AirSim* sim) {
                     );
                     
                     if (dist <= sim->lasers[i].maximum_range) {
-                        sim->threats[threat_idx].hp -= sim->lasers[i].damage_per_second * sim->dt;
-                        if (sim->threats[threat_idx].hp <= 0) {
-                            sim->threats[threat_idx].type = 0;
-                        }
+                        // Reduce guidance gain
+                        sim->threats[threat_idx].guidance_gain = fmaxf(0.0f, 
+                            sim->threats[threat_idx].guidance_gain - 
+                            sim->lasers[i].guidance_reduction * sim->dt);
                     }
                 }
             }
@@ -311,116 +353,41 @@ char check_terminal(AirSim* sim) {
                 sim->aircraft_x, sim->aircraft_y, sim->aircraft_z
             );
             if (dist <= sim->threats[i].lethal_radius) {
-                #ifdef DEBUG_TERMINAL
-                printf("Terminal condition met: Threat %d within lethal radius (%f <= %f)\n", 
-                       i, dist, sim->threats[i].lethal_radius);
-                #endif
                 return 1;
             }
         }
     }
     
-    // Check if all threats are defeated
-    bool all_threats_defeated = true;
+    // Check if all active threats have expired
+    bool all_threats_expired = false;
     bool had_threats = false;
     for (int i = 0; i < MAX_THREATS; i++) {
         if (sim->threats[i].type > 0) {
             had_threats = true;
-            if (sim->threats[i].hp > 0) {
-                all_threats_defeated = false;
+            if (sim->threats[i].lifetime > 0) {
+                all_threats_expired = false;
                 break;
             }
         }
     }
-    if (had_threats && all_threats_defeated) {
-        #ifdef DEBUG_TERMINAL
-        printf("Terminal condition met: All threats defeated\n");
-        #endif
+    if (had_threats && all_threats_expired) {
         return 1;
     }
     
     // Check time limits
     if (sim->time >= sim->max_time || sim->ticks >= sim->max_steps) {
-        #ifdef DEBUG_TERMINAL
-        printf("Terminal condition met: Time or step limit reached.\n");
-        #endif
         return 1;
     }
     
     return 0;
 }
 
-// Environment interface functions
-void update_observations(AirSim* sim) {
-    #ifdef DEBUG_PRINT
-    printf("Debug: Updating observations, aircraft at (%f, %f, %f)\n", 
-           sim->aircraft_x, sim->aircraft_y, sim->aircraft_z);
-    #endif
-    int obs_idx = 0;
-    sim->observations[obs_idx++] = sim->aircraft_x;
-    sim->observations[obs_idx++] = sim->aircraft_y;
-    sim->observations[obs_idx++] = sim->aircraft_z;
-    sim->observations[obs_idx++] = sim->aircraft_vx;
-    sim->observations[obs_idx++] = sim->aircraft_vy;
-    sim->observations[obs_idx++] = sim->aircraft_vz;
-    
-    for (int i = 0; i < MAX_THREATS; i++) {
-        #ifdef DEBUG_PRINT
-        printf("Debug: Threat %d at (%f, %f, %f), type %d\n", 
-               i, sim->threats[i].x, sim->threats[i].y, sim->threats[i].z, sim->threats[i].type);
-        #endif
-        sim->observations[obs_idx++] = (float)sim->threats[i].type;
-        sim->observations[obs_idx++] = sim->threats[i].x;
-        sim->observations[obs_idx++] = sim->threats[i].y;
-        sim->observations[obs_idx++] = sim->threats[i].z;
-        sim->observations[obs_idx++] = sim->threats[i].vx;
-        sim->observations[obs_idx++] = sim->threats[i].vy;
-        sim->observations[obs_idx++] = sim->threats[i].vz;
-        sim->observations[obs_idx++] = (float)sim->threats[i].hp;
-    }
-    
-    // Laser states
-    for (int i = 0; i < MAX_LASERS; i++) {
-        sim->observations[obs_idx++] = (float)sim->lasers[i].type;
-        sim->observations[obs_idx++] = (float)sim->lasers[i].engaging_threat;
-        sim->observations[obs_idx++] = sim->lasers[i].az;
-        sim->observations[obs_idx++] = sim->lasers[i].el;
-    }
-}
-
-void process_actions(AirSim* sim) {
-    // Actions encode which laser engages which threat
-    for (int i = 0; i < MAX_LASERS; i++) {
-        #ifdef DEBUG_PRINT
-        printf("[Step %d] ProcessActions: Laser %d current_target=%d, action=%d\n", sim->ticks,
-               i, sim->lasers[i].engaging_threat, sim->actions[i]);
-        #endif
-        // Don't override manual engagement with action buffer
-        if (sim->lasers[i].engaging_threat == -1) {
-            // Only set engaging_threat if action is a valid threat index
-            if (sim->actions[i] >= 0 && sim->actions[i] < MAX_THREATS && 
-                sim->threats[sim->actions[i]].type > 0) {
-                sim->lasers[i].engaging_threat = sim->actions[i];
-                #ifdef DEBUG_PRINT
-                printf("[Step %d] ProcessActions: Laser %d engaging threat %d from action buffer\n", 
-                      sim->ticks, i, sim->actions[i]);
-                #endif
-            }
-        } else {
-            #ifdef DEBUG_PRINT
-            printf("[Step %d] ProcessActions: Laser %d keeping manual engagement on threat %d\n",
-                  sim->ticks, i, sim->lasers[i].engaging_threat);
-            #endif
-        }
-    }
-}
-
 void compute_rewards(AirSim* sim) {
     float reward = 0.0f;
     
-    // Reward for destroying threats
+    // Reward for surviving until threats expire
     for (int i = 0; i < MAX_THREATS; i++) {
-        if (sim->threats[i].type == 0 && sim->threats[i].hp <= 0) {
+        if (sim->threats[i].type == 0 && sim->threats[i].lifetime <= 0) {
             reward += 10.0f;
         }
     }
@@ -432,7 +399,44 @@ void compute_rewards(AirSim* sim) {
     
     sim->rewards[0] = reward;
 }
+void process_actions(AirSim* sim) {
+    for (int i = 0; i < MAX_LASERS; i++) {
+        if (sim->lasers[i].engaging_threat == -1) {
+            if (sim->actions[i] >= 0 && sim->actions[i] < MAX_THREATS && 
+                sim->threats[sim->actions[i]].type > 0) {
+                sim->lasers[i].engaging_threat = sim->actions[i];
+            }
+        }
+    }
+}
 
+void update_observations(AirSim* sim) {
+    int obs_idx = 0;
+    sim->observations[obs_idx++] = sim->aircraft_x;
+    sim->observations[obs_idx++] = sim->aircraft_y;
+    sim->observations[obs_idx++] = sim->aircraft_z;
+    sim->observations[obs_idx++] = sim->aircraft_vx;
+    sim->observations[obs_idx++] = sim->aircraft_vy;
+    sim->observations[obs_idx++] = sim->aircraft_vz;
+    
+    for (int i = 0; i < MAX_THREATS; i++) {
+        sim->observations[obs_idx++] = (float)sim->threats[i].type;
+        sim->observations[obs_idx++] = sim->threats[i].x;
+        sim->observations[obs_idx++] = sim->threats[i].y;
+        sim->observations[obs_idx++] = sim->threats[i].z;
+        sim->observations[obs_idx++] = sim->threats[i].vx;
+        sim->observations[obs_idx++] = sim->threats[i].vy;
+        sim->observations[obs_idx++] = sim->threats[i].vz;
+        sim->observations[obs_idx++] = sim->threats[i].guidance_gain;  // Replace HP with guidance_gain
+    }
+    
+    for (int i = 0; i < MAX_LASERS; i++) {
+        sim->observations[obs_idx++] = (float)sim->lasers[i].type;
+        sim->observations[obs_idx++] = (float)sim->lasers[i].engaging_threat;
+        sim->observations[obs_idx++] = sim->lasers[i].az;
+        sim->observations[obs_idx++] = sim->lasers[i].el;
+    }
+}
 // Main simulation step
 void step(AirSim* sim) {
     #ifdef DEBUG_PRINT
@@ -462,7 +466,7 @@ void step(AirSim* sim) {
     #ifdef DEBUG_PRINT
     printf("Debug: After slewing lasers\n");
     #endif
-    apply_damage(sim);
+    apply_countermeasures(sim);
     #ifdef DEBUG_PRINT
     printf("Debug: After applying damage\n");
     #endif
@@ -504,19 +508,30 @@ void reset(AirSim* sim) {
         
         // Position threats in front of aircraft in a spread pattern
         float angle = ((float)i - 1.5f) * PI / 6.0f;  // Spread threats across 60 degrees
-        sim->threats[i].x = sim->aircraft_x + sim->initial_distance + 500.0f * cosf(angle);
+        float rand_z = ((float)rand() / (float)RAND_MAX - 0.5f) * 200.0f;  // Limit Z variation to ±100m
+        
+        sim->threats[i].x = sim->aircraft_x + sim->initial_distance * cosf(angle);
         sim->threats[i].y = sim->aircraft_y + sim->initial_distance * sinf(angle);
-        sim->threats[i].z = sim->aircraft_z + ((float)rand() / (float)RAND_MAX - 0.5f) * 1000.0f;
+        sim->threats[i].z = sim->aircraft_z + rand_z;  // Small variation in altitude
         
         sim->threats[i].vx = 0.0f;
         sim->threats[i].vy = 0.0f;
         sim->threats[i].vz = 0.0f;
-        sim->threats[i].hp = 100;
         sim->threats[i].engagement_radius = sim->engagement_radius;
         sim->threats[i].lethal_radius = 30.0f;
         sim->threats[i].acceleration = sim->threat_acceleration;
         sim->threats[i].max_velocity = sim->threat_max_velocity;        
         sim->threats[i].lifetime = 17.0f;
+        sim->threats[i].guidance_gain = 1.0f;
+        sim->threats[i].track_rate = 30.0f;
+        sim->threats[i].fov = 30.0f;
+        
+        // Initialize pointing angles toward aircraft
+        compute_angles_to_target(
+            sim->threats[i].x, sim->threats[i].y, sim->threats[i].z,
+            sim->aircraft_x, sim->aircraft_y, sim->aircraft_z,
+            &sim->threats[i].az, &sim->threats[i].el
+        );
     }
     
     // Reset lasers
@@ -526,9 +541,9 @@ void reset(AirSim* sim) {
         sim->lasers[i].engaging_threat = -1;
         sim->lasers[i].az = 0.0f;
         sim->lasers[i].el = 0.0f;
-        sim->lasers[i].track_rate = 30.0f;
+        sim->lasers[i].track_rate = 60.0f;
         sim->lasers[i].fov = 5.0f;
-        sim->lasers[i].damage_per_second = 2000.0f;
+        sim->lasers[i].guidance_reduction = 1.0f;  // Reduces guidance by 100% per second
         sim->lasers[i].maximum_range = 4000.0f;
     }
     
@@ -582,3 +597,4 @@ void free_allocated(AirSim* sim) {
     sim->terminals = NULL;
     sim->log_buffer = NULL;
 }
+

@@ -157,25 +157,48 @@ void draw_aircraft(Camera2D* cam, AirSim* sim, GameState* state) {
     }
 }
 
+void draw_threat_fov(Camera2D* cam, Vector2 pos, Threat* threat) {
+    float range = threat->engagement_radius * cam->zoom;
+    float az_rad = threat->az * PI / 180.0f;
+    float fov_rad = threat->fov * PI / 180.0f;
+    
+    float start_angle = az_rad - fov_rad;
+    float end_angle = az_rad + fov_rad;
+    
+    Color fill_color = (Color){255, 0, 0, (unsigned char)(32 * threat->guidance_gain)};
+    Color line_color = (Color){255, 0, 0, (unsigned char)(128 * threat->guidance_gain)};
+    
+    // Draw FOV arc
+    DrawCircleSector(pos, range * 0.2f,  // Shorter range for threat FOV visualization
+                    start_angle * RAD2DEG, 
+                    end_angle * RAD2DEG, 
+                    32, fill_color);
+                    
+    DrawCircleSectorLines(pos, range * 0.2f,
+                         start_angle * RAD2DEG, 
+                         end_angle * RAD2DEG, 
+                         32, line_color);
+                         
+    // Draw centerline showing threat's pointing angle
+    Vector2 end = {
+        pos.x + cosf(az_rad) * range * 0.2f,
+        pos.y + sinf(az_rad) * range * 0.2f
+    };
+    DrawLineEx(pos, end, 2, line_color);
+}
+
 void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths, int selected_threat) {
     for (int i = 0; i < MAX_THREATS; i++) {
         if (sim->threats[i].type > 0) {
+            
             Vector2 pos = world_to_screen(cam, sim->threats[i].x, sim->threats[i].y);
             
             // Draw threat dot sized to lethal radius
             float lethal_radius = sim->threats[i].lethal_radius * cam->zoom;
             
-            // Draw HP as pie/radial timer (background)
-            DrawCircleV(pos, lethal_radius, GRAY);
-            
-            // Draw remaining HP as pie segment
-            float hp_fraction = sim->threats[i].hp / 100.0f;  // Assuming max HP is 100
-            if (hp_fraction > 0) {
-                DrawCircleSector(pos, lethal_radius,
-                               180.0f, // Start from bottom
-                               180.0f + 360.0f * hp_fraction, // Fill based on HP
-                               32, RED);
-            }
+            // Draw threat circle with guidance-based opacity
+            Color threat_color = (Color){255, 0, 0, (unsigned char)(255 * sim->threats[i].guidance_gain)};
+            DrawCircleV(pos, lethal_radius, threat_color);
             
             // Draw outline
             DrawCircleLines(pos.x, pos.y, lethal_radius, BLACK);
@@ -186,6 +209,10 @@ void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths, int selected_thre
                 sim->aircraft_x, sim->aircraft_y, sim->aircraft_z
             );
             DrawText(TextFormat("%.0fm", dist), pos.x + 10, pos.y - 15, RANGE_TEXT_SIZE, BLACK);
+            
+            // Draw lifetime text
+            DrawText(TextFormat("%.1fs", sim->threats[i].lifetime), 
+                    pos.x + 10, pos.y + 5, RANGE_TEXT_SIZE, BLACK);
             
             // Only draw engagement radius for selected threat
             if (i == selected_threat) {
@@ -219,6 +246,9 @@ void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths, int selected_thre
             if (i == selected_threat) {
                 draw_threat_bracket(cam, pos, true);
             }
+
+            // Add FOV visualization after drawing the threat circle
+            draw_threat_fov(cam, pos, &sim->threats[i]);
         }
     }
 }
