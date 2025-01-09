@@ -149,4 +149,3 @@ checkpoints/
 experiments/
 wandb/
 raylib/
-airsim

@@ -94,7 +94,7 @@ def test_performance(num_envs=1, timeout=10, action_cache_size=1024):
     print(f"Steps per second: {steps_per_second:,.0f}")
 
 
-def test_sim(steps=2980, action_cache_size=1024):
+def test_sim(ticks=2980, action_cache_size=1024):
     env = AirDefense(
         num_envs=1,
         initial_distance=1500.0,
@@ -105,7 +105,7 @@ def test_sim(steps=2980, action_cache_size=1024):
     )
     obs, _ = env.reset()
 
-    for step in range(steps):
+    for tick in range(ticks):
         obs = obs.reshape(1, -1)
         aircraft_pos = obs[0, :3]
 
@@ -130,8 +130,8 @@ def test_sim(steps=2980, action_cache_size=1024):
 
         obs, reward, term, trunc, info = env.step(actions=[0])
 
-        if step % 10 == 0:
-            print(f"\nStep {step}")
+        if tick % 10 == 0:
+            print(f"\nTick {tick}")
             print(
                 f"Aircraft: ({obs[0,0]:.0f}, {obs[0,1]:.0f}, {obs[0,2]:.0f}) term: {term}"
             )

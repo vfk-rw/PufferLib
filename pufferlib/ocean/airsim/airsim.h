@@ -100,7 +100,7 @@ typedef struct AirSim {
     Threat threats[MAX_THREATS];
     Laser lasers[MAX_LASERS];
     float time;              // Current simulation time
-    int steps;                // Step counter
+    int ticks;              // Tick counter (previously steps)
     char terminal;            // Terminal state flag
     
     // Aircraft state
@@ -227,7 +227,7 @@ void slew_lasers(AirSim* sim) {
     for (int i = 0; i < MAX_LASERS; i++) {
         if (sim->lasers[i].type > 0 && sim->lasers[i].engaging_threat >= 0) {
             int threat_idx = sim->lasers[i].engaging_threat;
-            printf("[Step %d] SlewLasers: Laser %d attempting to engage threat %d (type=%d)\n", sim->steps,
+            printf("[Step %d] SlewLasers: Laser %d attempting to engage threat %d (type=%d)\n", sim->ticks,
                    i, threat_idx, sim->threats[threat_idx].type);
                    
             if (sim->threats[threat_idx].type > 0) {
@@ -238,7 +238,7 @@ void slew_lasers(AirSim* sim) {
                     &target_az, &target_el
                 );
                 
-                printf("[Step %d] SlewLasers: Laser %d -> Threat %d, Current(az=%.1f, el=%.1f) Target(az=%.1f, el=%.1f)\n", sim->steps,
+                printf("[Step %d] SlewLasers: Laser %d -> Threat %d, Current(az=%.1f, el=%.1f) Target(az=%.1f, el=%.1f)\n", sim->ticks,
                        i, threat_idx, sim->lasers[i].az, sim->lasers[i].el, target_az, target_el);
                 
                 // Calculate angle differences
@@ -257,7 +257,7 @@ void slew_lasers(AirSim* sim) {
                 sim->lasers[i].el = fminf(90.0f, fmaxf(-90.0f, sim->lasers[i].el + el_diff));
             } else {
                 // Don't reset engagement - let manual control handle this
-                printf("[Step %d] SlewLasers: Laser %d target threat %d is inactive\n", sim->steps,
+                printf("[Step %d] SlewLasers: Laser %d target threat %d is inactive\n", sim->ticks,
                        i, threat_idx);
             }
         }
@@ -317,7 +317,7 @@ char check_terminal(AirSim* sim) {
     }
     
     // Check time limits
-    if (sim->time >= sim->max_time || sim->steps >= sim->max_steps) {
+    if (sim->time >= sim->max_time || sim->ticks >= sim->max_steps) {
         #ifdef DEBUG_TERMINAL
         printf("Terminal condition met: Time or step limit reached.\n");
         #endif
@@ -368,7 +368,7 @@ void update_observations(AirSim* sim) {
 void process_actions(AirSim* sim) {
     // Actions encode which laser engages which threat
     for (int i = 0; i < MAX_LASERS; i++) {
-        printf("[Step %d] ProcessActions: Laser %d current_target=%d, action=%d\n", sim->steps,
+        printf("[Step %d] ProcessActions: Laser %d current_target=%d, action=%d\n", sim->ticks,
                i, sim->lasers[i].engaging_threat, sim->actions[i]);
         
         // Don't override manual engagement with action buffer
@@ -378,11 +378,11 @@ void process_actions(AirSim* sim) {
                 sim->threats[sim->actions[i]].type > 0) {
                 sim->lasers[i].engaging_threat = sim->actions[i];
                 printf("[Step %d] ProcessActions: Laser %d engaging threat %d from action buffer\n", 
-                      sim->steps, i, sim->actions[i]);
+                      sim->ticks, i, sim->actions[i]);
             }
         } else {
             printf("[Step %d] ProcessActions: Laser %d keeping manual engagement on threat %d\n",
-                  sim->steps, i, sim->lasers[i].engaging_threat);
+                  sim->ticks, i, sim->lasers[i].engaging_threat);
         }
     }
 }
@@ -409,7 +409,7 @@ void compute_rewards(AirSim* sim) {
 void step(AirSim* sim) {
     #ifdef DEBUG_PRINT
     printf("Debug Step: Using observations buffer at %p\n", sim->observations);
-    printf("Debug: Starting step %d\n", sim->steps);
+    printf("Debug: Starting tick %d\n", sim->ticks);
     #endif
     process_actions(sim);
     
@@ -451,13 +451,13 @@ void step(AirSim* sim) {
     update_observations(sim);
     
     sim->time += sim->dt;
-    sim->steps += 1;
+    sim->ticks += 1;
 }
 
 // Reset simulation
 void reset(AirSim* sim) {
     sim->time = 0.0f;
-    sim->steps = 0;
+    sim->ticks = 0;
     sim->terminal = 0;
     sim->terminals[0] = 0;
 

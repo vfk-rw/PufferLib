@@ -284,8 +284,8 @@ void draw_hud(AirSim* sim, GameState* state) {
     
     DrawText(TextFormat("Aircraft Pos: (%.0f, %.0f, %.0f)", 
         sim->aircraft_x, sim->aircraft_y, sim->aircraft_z), 10, 10, 20, BLACK);
-    DrawText(TextFormat("Step: %d Time: %.1fs %s %s", 
-        sim->steps, sim->time, 
+    DrawText(TextFormat("Tick: %d Time: %.1fs %s %s", 
+        sim->ticks, sim->time, 
         state->paused ? "PAUSED" : "",
         sim->terminal ? "TERMINAL" : ""), 
         10, 35, 20, sim->terminal ? RED : BLACK);
@@ -483,7 +483,8 @@ int main() {
         // Handle laser engagement (ENTER to engage, BACKSPACE to disengage)
         if (IsKeyPressed(KEY_ENTER)) {
             if (sim.threats[state.selected_threat].type > 0) {
-                printf("[Step %d] Keyboard command to Laser %d engaging threat %d\n", sim.steps, state.active_laser, state.selected_threat);
+                printf("[Tick %d] Keyboard command to Laser %d engaging threat %d\n", 
+                       sim.ticks, state.active_laser, state.selected_threat);
                 sim.lasers[state.active_laser].engaging_threat = state.selected_threat;
             }
         }
