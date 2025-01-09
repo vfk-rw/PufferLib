@@ -11,6 +11,9 @@ WEB_OUTPUT_DIR="build_web/$ENV"
 # Create build output directory
 mkdir -p "$WEB_OUTPUT_DIR"
 
+# Add yaml-cpp flags
+YAML_FLAGS="-lyaml-cpp"
+
 if [ "$MODE" = "web" ]; then
     echo "Building $ENV for web deployment..."
     emcc \
@@ -65,15 +68,19 @@ echo ${FLAGS[@]}
 if [ "$MODE" = "local" ]; then
     echo "Building $ENV for local testing..."
     if [ "$PLATFORM" = "Linux" ]; then
-        # Add ffmpeg_linux.c to compilation
-        clang -g -O0 ${FLAGS[@]} "$SRC_DIR/ffmpeg_linux.c" -fsanitize=address,undefined,bounds,pointer-overflow,leak
+        # Add config.c and log.c to compilation
+        clang -g -O0 ${FLAGS[@]} \
+            "$SRC_DIR/ffmpeg_linux.c" \
+            $YAML_FLAGS \
+            -fsanitize=address,undefined,bounds,pointer-overflow,leak
     else
-        clang -g -O0 ${FLAGS[@]}
+        clang -g -O0 ${FLAGS[@]} "$SRC_DIR/config.c" "$SRC_DIR/log.c" $YAML_FLAGS
     fi  
 elif [ "$MODE" = "fast" ]; then
     echo "Building optimized $ENV for local testing..."
-    # Add ffmpeg_linux.c to compilation for fast mode too
-    clang -pg -O2 ${FLAGS[@]} "$SRC_DIR/ffmpeg_linux.c"
+    clang -pg -O2 ${FLAGS[@]} \
+        "$SRC_DIR/ffmpeg_linux.c" \
+        $YAML_FLAGS
     echo "Built to: $ENV"
 else
     echo "Invalid mode specified: local|fast|web"

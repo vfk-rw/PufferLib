@@ -12,8 +12,8 @@ class AirDefense(pufferlib.PufferEnv):
         render_mode=None,
         initial_distance=2000.0,
         aircraft_speed=100.0,
-        threat_acceleration=400.0,
-        threat_max_velocity=1000.0,
+        threat_acceleration=200.0,  # ~20G
+        threat_max_velocity=800.0,
         engagement_radius=2500.0,
         max_time=60.0,
         dt=0.001,
@@ -94,7 +94,7 @@ def test_performance(num_envs=1024, timeout=10, action_cache_size=2048):
     print(f"Steps per second: {steps_per_second:,.0f}")
 
 
-def test_sim(ticks=2980, action_cache_size=1024):
+def test_sim(ticks=4000, action_cache_size=1024):
     env = AirDefense(
         num_envs=1,
         initial_distance=1500.0,
@@ -130,7 +130,7 @@ def test_sim(ticks=2980, action_cache_size=1024):
 
         obs, reward, term, trunc, info = env.step(actions=[0])
 
-        if tick % 100 == 0:
+        if tick % 200 == 0:
             print(f"\nTick {tick}")
             print(
                 f"Aircraft: ({obs[0,0]:.0f}, {obs[0,1]:.0f}, {obs[0,2]:.0f}) term: {term}"

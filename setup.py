@@ -282,6 +282,25 @@ extensions = [Extension(
     extra_link_args=[rpath_arg]
 
 ) for path in extension_paths]
+
+airsim_files = [
+    'pufferlib/ocean/airsim/airsim.c',
+    'pufferlib/ocean/airsim/config.c', 
+    'pufferlib/ocean/airsim/log.c'
+]
+
+airsim_extension = Extension(
+    name="pufferlib.ocean.airsim.cy_airsim",
+    sources=["pufferlib/ocean/airsim/cy_airsim.pyx"] + airsim_files,
+    include_dirs=[
+        numpy.get_include(),
+        "raylib/include",
+        "pufferlib/ocean/airsim"
+    ],
+    libraries=['raylib', 'yaml-cpp'],
+    library_dirs=['raylib/lib'],
+    extra_compile_args=['-DPLATFORM_DESKTOP'],
+)
  
 setup(
     name="pufferlib",
@@ -307,6 +326,7 @@ setup(
         'psutil==5.9.5',
         'pynvml',
         'imageio',
+        'pyyaml',  # Add YAML dependency for config files
     ],
     extras_require={
         'docs': docs,
@@ -321,6 +341,7 @@ setup(
         "pufferlib/puffernet.pyx",
         "pufferlib/ocean/grid/c_grid.pyx",
         *extensions,
+        airsim_extension
     ], 
     compiler_directives={
         'language_level': 3,

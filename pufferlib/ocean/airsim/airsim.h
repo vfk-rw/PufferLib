@@ -3,6 +3,7 @@
 #include <math.h>
 #include "raylib.h"
 #include <stdio.h> // Added to declare printf and fprintf
+#include "log.h"
 
 #define MAX_THREATS 10
 #define MAX_LASERS 5
@@ -10,22 +11,69 @@
 //#define DEBUG_TERMINAL
 //#define DEBUG_PRINT
 #define LOG_BUFFER_SIZE 1024
-#define MAX_SEEKER_ERROR_SCALE 30.0f  // Make error much larger for visibility
+#define MAX_SEEKER_ERROR_SCALE 50.0f  // Make error much larger for visibility
 #define RAD2DEG_SAFE 57.2957795131f  // 180/pi
 #define DEG2RAD_SAFE 0.0174532925f   // pi/180
 
-typedef struct Log Log;
-struct Log {
-    float episode_return;
-    float episode_length;
-};
+typedef struct Threat {
+    int type;
+    bool engaged;
+    float x, y, z;
+    float vx, vy, vz;
+    float az, el;
+    float fov;
+    float track_rate;
+    float guidance_gain;
+    float engagement_radius;
+    float lethal_radius;
+    float acceleration;
+    float max_velocity;
+    float lifetime;
+} Threat;
 
-typedef struct LogBuffer LogBuffer;
-struct LogBuffer {
-    Log* logs;
-    int length;
-    int idx;
-};
+typedef struct Laser {
+    int type;
+    int engaging_threat;
+    float az, el;
+    float track_rate;
+    float fov;
+    float guidance_reduction;
+    float maximum_range;
+} Laser;
+
+typedef struct AirSim {
+    // Simulation parameters 
+    float initial_distance;
+    float aircraft_speed;
+    float threat_acceleration;
+    float threat_max_velocity;
+    float engagement_radius;
+
+    // Core simulation state
+    Threat threats[MAX_THREATS];
+    Laser lasers[MAX_LASERS];
+    float time;
+    int ticks;
+    char terminal;
+
+    // Aircraft state
+    float aircraft_x, aircraft_y, aircraft_z;
+    float aircraft_vx, aircraft_vy, aircraft_vz;
+
+    // Environment parameters
+    float dt;
+    float max_time;
+    int max_steps;
+
+    // Environment interface
+    float* observations;
+    int* actions;
+    float* rewards;
+    unsigned char* terminals;
+
+    LogBuffer* log_buffer;
+    Log log;
+} AirSim;
 
 LogBuffer* allocate_logbuffer(int size) {
     LogBuffer* logs = (LogBuffer*)calloc(1, sizeof(LogBuffer));
@@ -63,70 +111,6 @@ Log aggregate_and_clear(LogBuffer* logs) {
     logs->idx = 0;
     return log;
 }
-
-// Threat state structure
-typedef struct Threat {
-    int type;                  // 0 for inactive, 1+ for active
-    bool engaged;              // True if threat is launched
-    float x, y, z;            // Position (meters)
-    float vx, vy, vz;         // Velocity (m/s)
-    float az, el;             // Seeker pointing angles (degrees)
-    float fov;                // Field of view (degrees)
-    float track_rate;         // Base angular tracking rate (deg/s)
-    float guidance_gain;      // Current guidance gain (1.0 = full, 0.0 = none)
-    float engagement_radius;   // Meters
-    float lethal_radius;      // Meters
-    float acceleration;       // m/s^2
-    float max_velocity;       // m/s
-    float lifetime;           // Seconds remaining
-} Threat;
-
-// Laser state structure
-typedef struct Laser {
-    int type;                 // 0 for inactive, 1+ for active
-    int engaging_threat;      // -1: not engaging, 0+: threat index
-    float az;                // Azimuth (degrees)
-    float el;                // Elevation (degrees)
-    float track_rate;         // Degrees/second
-    float fov;                // Field of view (degrees)
-    float guidance_reduction; // Guidance reduction rate per second
-    float maximum_range;      // Maximum effective range (meters)
-} Laser;
-
-// Main simulation state
-typedef struct AirSim {
-    // Simulation parameters
-    float initial_distance;
-    float aircraft_speed;
-    float threat_acceleration;
-    float threat_max_velocity;
-    float engagement_radius;
-
-    // Core simulation state  
-    Threat threats[MAX_THREATS];
-    Laser lasers[MAX_LASERS];
-    float time;              // Current simulation time
-    int ticks;              // Tick counter (previously steps)
-    char terminal;            // Terminal state flag
-    
-    // Aircraft state
-    float aircraft_x, aircraft_y, aircraft_z;     // Position
-    float aircraft_vx, aircraft_vy, aircraft_vz;  // Velocity
-    
-    // Environment parameters
-    float dt;                 // Time step size
-    float max_time;           // Maximum simulation time
-    int max_steps;            // Maximum simulation steps
-    
-    // Environment interface
-    float* observations;      // Observation buffer
-    int* actions;            // Action buffer
-    float* rewards;          // Reward buffer
-    unsigned char* terminals; // Terminal state buffer
-
-    LogBuffer* log_buffer;
-    Log log;
-} AirSim;
 
 // Helper functions
 float compute_distance(float x1, float y1, float z1, float x2, float y2, float z2) {
@@ -197,7 +181,7 @@ void step_threats(AirSim* sim) {
             
             // Only apply error to azimuth for now
             float apparent_az = true_az + error;
-            float apparent_el = true_el;  // No elevation error yet
+            float apparent_el = true_el + error;
             
             // Update seeker head angles with track rate limit
             float max_turn = sim->threats[i].track_rate * sim->dt;
@@ -309,7 +293,6 @@ void slew_lasers(AirSim* sim) {
     }
 }
 
-// Rename apply_damage to apply_countermeasures
 void apply_countermeasures(AirSim* sim) {
     for (int i = 0; i < MAX_LASERS; i++) {
         if (sim->lasers[i].type > 0 && sim->lasers[i].engaging_threat >= 0) {
@@ -512,7 +495,7 @@ void reset(AirSim* sim) {
         
         sim->threats[i].x = sim->aircraft_x + sim->initial_distance * cosf(angle);
         sim->threats[i].y = sim->aircraft_y + sim->initial_distance * sinf(angle);
-        sim->threats[i].z = sim->aircraft_z + rand_z;  // Small variation in altitude
+        sim->threats[i].z = 300.0f + rand_z;  // have threats start at ~300m altitude
         
         sim->threats[i].vx = 0.0f;
         sim->threats[i].vy = 0.0f;
@@ -523,7 +506,7 @@ void reset(AirSim* sim) {
         sim->threats[i].max_velocity = sim->threat_max_velocity;        
         sim->threats[i].lifetime = 17.0f;
         sim->threats[i].guidance_gain = 1.0f;
-        sim->threats[i].track_rate = 30.0f;
+        sim->threats[i].track_rate = 100.0f;
         sim->threats[i].fov = 30.0f;
         
         // Initialize pointing angles toward aircraft
@@ -537,7 +520,7 @@ void reset(AirSim* sim) {
     // Reset lasers
     for (int i = 0; i < MAX_LASERS; i++) {
         sim->lasers[i].type = 0;
-        if (i < 2) sim->lasers[i].type = 1;     // Start with 2 active lasers
+        //if (i < 2) sim->lasers[i].type = 1;     // Start with 2 active lasers
         sim->lasers[i].engaging_threat = -1;
         sim->lasers[i].az = 0.0f;
         sim->lasers[i].el = 0.0f;
@@ -552,12 +535,7 @@ void reset(AirSim* sim) {
     sim->terminals[0] = false;
 }
 
-// Initialize simulation
 void init(AirSim* sim) {
-    // Don't initialize parameters - set by Python
-    // sim->dt = 0.01f;
-    // sim->max_time = 60.0f;
-    // sim->max_steps = 6000;
     reset(sim);
 }
 
