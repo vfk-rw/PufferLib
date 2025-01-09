@@ -161,13 +161,21 @@ void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths, int selected_thre
             
             // Draw threat dot sized to lethal radius
             float lethal_radius = sim->threats[i].lethal_radius * cam->zoom;
-            DrawCircleV(pos, lethal_radius, RED);
             
-            // Only draw engagement radius for selected threat
-            if (i == selected_threat) {
-                float radius = sim->threats[i].engagement_radius * cam->zoom;
-                DrawCircleLines(pos.x, pos.y, radius, RED);
+            // Draw HP as pie/radial timer (background)
+            DrawCircleV(pos, lethal_radius, GRAY);
+            
+            // Draw remaining HP as pie segment
+            float hp_fraction = sim->threats[i].hp / 100.0f;  // Assuming max HP is 100
+            if (hp_fraction > 0) {
+                DrawCircleSector(pos, lethal_radius,
+                               180.0f, // Start from bottom
+                               180.0f + 360.0f * hp_fraction, // Fill based on HP
+                               32, RED);
             }
+            
+            // Draw outline
+            DrawCircleLines(pos.x, pos.y, lethal_radius, BLACK);
             
             // Draw range text
             float dist = compute_distance(
@@ -176,19 +184,12 @@ void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths, int selected_thre
             );
             DrawText(TextFormat("%.0fm", dist), pos.x + 10, pos.y - 15, RANGE_TEXT_SIZE, BLACK);
             
-            // Draw HP bar above range text
-            Vector2 bar_pos = {pos.x + 10, pos.y - 15 - HP_BAR_HEIGHT - HP_BAR_PADDING};
-            float hp_fraction = sim->threats[i].hp / 100.0f;  // Assuming max HP is 100
+            // Only draw engagement radius for selected threat
+            if (i == selected_threat) {
+                float radius = sim->threats[i].engagement_radius * cam->zoom;
+                DrawCircleLines(pos.x, pos.y, radius, RED);
+            }
             
-            // Bar background
-            DrawRectangle(bar_pos.x, bar_pos.y, HP_BAR_WIDTH, HP_BAR_HEIGHT, GRAY);
-            // HP remaining
-            DrawRectangle(bar_pos.x, bar_pos.y, 
-                         HP_BAR_WIDTH * hp_fraction, HP_BAR_HEIGHT, 
-                         RED);
-            // Bar outline
-            DrawRectangleLines(bar_pos.x, bar_pos.y, HP_BAR_WIDTH, HP_BAR_HEIGHT, BLACK);
-
             // Draw dotted line path to aircraft if enabled
             if (show_paths) {
                 Vector2 aircraft_pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
