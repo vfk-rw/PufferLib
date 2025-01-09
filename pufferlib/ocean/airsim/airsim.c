@@ -1,4 +1,5 @@
 #include "airsim.h"
+#include "ffmpeg.h"
 #include <stdio.h>
 
 // Window/display settings
@@ -45,6 +46,8 @@ typedef struct {
     int selected_threat;   // Currently selected threat
     bool show_help;    // Add help visibility toggle
     Camera2DEx camera;
+    bool recording;  // Add recording state flag
+    FFMPEG* ffmpeg;  // Add ffmpeg handle
 } GameState;
 
 // Convert simulation coordinates to screen coordinates
@@ -242,6 +245,7 @@ void draw_grid(Camera2D* cam, float grid_size) {
 void draw_help_panel(void) {
     const char* help_text[] = {
         "F1 - Toggle Help",
+        "F2 - REC",
         "SPACE - Pause/Resume",
         "R - Reset Simulation",
         "P - Toggle Threat Paths",
@@ -326,6 +330,21 @@ void draw_hud(AirSim* sim, GameState* state) {
             (WINDOW_WIDTH - textWidth)/2,
             WINDOW_HEIGHT/2 - fontSize/2,
             fontSize, RED);
+    }
+
+    // Add recording indicator
+    if (state->recording) {
+        DrawText("REC ⚫", WINDOW_WIDTH - 300, 10, 20, RED);
+    }
+
+    // Add recording indicator to bottom right corner
+    if (state->recording) {
+        const char* rec_text = "REC ⚫";
+        int text_width = MeasureText(rec_text, 20);
+        DrawText(rec_text, 
+                WINDOW_WIDTH - text_width - 10,  // 10 pixels from right edge
+                WINDOW_HEIGHT - 30,              // 30 pixels from bottom
+                20, RED);
     }
 }
 
@@ -430,7 +449,9 @@ int main() {
                 .target = {0, 0}
             },
             .zoom_target = PIXELS_PER_METER * 4.0f,
-        }
+        },
+        .recording = false,
+        .ffmpeg = NULL,
     };
 
     reset(&sim);
@@ -492,6 +513,24 @@ int main() {
             sim.lasers[state.active_laser].engaging_threat = -1;
         }
         
+        // Replace video recording logic
+        if (IsKeyPressed(KEY_F2)) {
+            if (!state.recording) {
+                state.recording = true;
+                state.ffmpeg = ffmpeg_start_rendering(WINDOW_WIDTH, WINDOW_HEIGHT, 30, NULL); // 30fps for video playback
+                if (!state.ffmpeg) {
+                    TraceLog(LOG_ERROR, "Failed to start recording");
+                    state.recording = false;
+                }
+            } else {
+                state.recording = false;
+                if (state.ffmpeg) {
+                    ffmpeg_end_rendering(state.ffmpeg, false);
+                    state.ffmpeg = NULL;
+                }
+            }
+        }
+
         // Update simulation if not paused and not terminal
         if (!state.paused && !sim.terminal) {
             step(&sim);
@@ -517,6 +556,20 @@ int main() {
         
         draw_hud(&sim, &state);
         EndDrawing();
+        
+        // Replace frame capture code with safer version
+        if (state.recording && state.ffmpeg) {
+            Image screen = LoadImageFromScreen();
+            if (screen.data) {
+                ffmpeg_send_frame_flipped(state.ffmpeg, screen.data, screen.width, screen.height);
+                UnloadImage(screen);
+            }
+        }
+    }
+
+    // Ensure recording is stopped
+    if (state.recording && state.ffmpeg) {
+        ffmpeg_end_rendering(state.ffmpeg, false);
     }
 
     free_allocated(&sim);

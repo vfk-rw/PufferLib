@@ -65,15 +65,15 @@ echo ${FLAGS[@]}
 if [ "$MODE" = "local" ]; then
     echo "Building $ENV for local testing..."
     if [ "$PLATFORM" = "Linux" ]; then
-        # These important debug flags don't work on macos
-        FLAGS+=(
-            -fsanitize=address,undefined,bounds,pointer-overflow,leak
-        )
+        # Add ffmpeg_linux.c to compilation
+        clang -g -O0 ${FLAGS[@]} "$SRC_DIR/ffmpeg_linux.c" -fsanitize=address,undefined,bounds,pointer-overflow,leak
+    else
+        clang -g -O0 ${FLAGS[@]}
     fi  
-    clang -g -O0 ${FLAGS[@]}
 elif [ "$MODE" = "fast" ]; then
     echo "Building optimized $ENV for local testing..."
-    clang -pg -O2 ${FLAGS[@]}
+    # Add ffmpeg_linux.c to compilation for fast mode too
+    clang -pg -O2 ${FLAGS[@]} "$SRC_DIR/ffmpeg_linux.c"
     echo "Built to: $ENV"
 else
     echo "Invalid mode specified: local|fast|web"

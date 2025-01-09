@@ -149,3 +149,4 @@ checkpoints/
 experiments/
 wandb/
 raylib/
+output.mp4
