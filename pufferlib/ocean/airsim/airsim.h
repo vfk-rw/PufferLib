@@ -225,21 +225,22 @@ void step_threats(AirSim* sim) {
 
 void slew_lasers(AirSim* sim) {
     for (int i = 0; i < MAX_LASERS; i++) {
+               
         if (sim->lasers[i].type > 0 && sim->lasers[i].engaging_threat >= 0) {
-            #ifdef DEBUG_PRINT
-            printf("Debug: Slew laser %d, Engaging Threat %d \n", i, sim->lasers[i].engaging_threat);
-            #endif
             int threat_idx = sim->lasers[i].engaging_threat;
+            printf("[Step %d] SlewLasers: Laser %d attempting to engage threat %d (type=%d)\n", sim->steps,
+                   i, threat_idx, sim->threats[threat_idx].type);
+                   
             if (sim->threats[threat_idx].type > 0) {
-                #ifdef DEBUG_PRINT
-                printf("Debug: Engaging threat %d\n", threat_idx);
-                #endif
                 float target_az, target_el;
                 compute_angles_to_target(
                     sim->aircraft_x, sim->aircraft_y, sim->aircraft_z,
                     sim->threats[threat_idx].x, sim->threats[threat_idx].y, sim->threats[threat_idx].z,
                     &target_az, &target_el
                 );
+                
+                printf("[Step %d] SlewLasers: Laser %d -> Threat %d, Current(az=%.1f, el=%.1f) Target(az=%.1f, el=%.1f)\n", sim->steps,
+                       i, threat_idx, sim->lasers[i].az, sim->lasers[i].el, target_az, target_el);
                 
                 // Calculate angle differences
                 float az_diff = fmodf(target_az - sim->lasers[i].az + 540.0f, 360.0f) - 180.0f;
@@ -255,6 +256,10 @@ void slew_lasers(AirSim* sim) {
                 // Update angles
                 sim->lasers[i].az = fmodf(sim->lasers[i].az + az_diff + 360.0f, 360.0f);
                 sim->lasers[i].el = fminf(90.0f, fmaxf(-90.0f, sim->lasers[i].el + el_diff));
+            } else {
+                printf("[Step %d] SlewLasers: Laser %d target threat %d is inactive, disengaging\n", sim->steps,
+                       i, threat_idx);
+                sim->lasers[i].engaging_threat = -1;  // Disengage if threat is inactive
             }
         }
     }
@@ -364,13 +369,21 @@ void update_observations(AirSim* sim) {
 void process_actions(AirSim* sim) {
     // Actions encode which laser engages which threat
     for (int i = 0; i < MAX_LASERS; i++) {
-        #ifdef DEBUG_PRINT
-            printf("Debug: Processing action %d, action %d\n", i, sim->actions[i]);
-        #endif
-        // Only set engaging_threat if action is a valid threat index
-        if (sim->actions[i] >= 0 && sim->actions[i] < MAX_THREATS && 
-            sim->threats[sim->actions[i]].type > 0) {
-            sim->lasers[i].engaging_threat = sim->actions[i];
+        printf("[Step %d] ProcessActions: Laser %d current_target=%d, action=%d\n", sim->steps,
+               i, sim->lasers[i].engaging_threat, sim->actions[i]);
+        
+        // Don't override manual engagement with action buffer
+        if (sim->lasers[i].engaging_threat == -1) {
+            // Only set engaging_threat if action is a valid threat index
+            if (sim->actions[i] >= 0 && sim->actions[i] < MAX_THREATS && 
+                sim->threats[sim->actions[i]].type > 0) {
+                sim->lasers[i].engaging_threat = sim->actions[i];
+                printf("[Step %d] ProcessActions: Laser %d engaging threat %d from action buffer\n", 
+                      sim->steps, i, sim->actions[i]);
+            }
+        } else {
+            printf("[Step %d] ProcessActions: Laser %d keeping manual engagement on threat %d\n",
+                  sim->steps, i, sim->lasers[i].engaging_threat);
         }
     }
 }
@@ -481,7 +494,8 @@ void reset(AirSim* sim) {
     
     // Reset lasers
     for (int i = 0; i < MAX_LASERS; i++) {
-        sim->lasers[i].type = 1;  // All lasers active
+        sim->lasers[i].type = 0;
+        if (i < 2) sim->lasers[i].type = 1;     // Start with 2 active lasers
         sim->lasers[i].engaging_threat = -1;
         sim->lasers[i].az = 0.0f;
         sim->lasers[i].el = 0.0f;

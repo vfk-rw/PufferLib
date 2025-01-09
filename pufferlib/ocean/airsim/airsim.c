@@ -20,7 +20,7 @@ typedef struct {
     bool show_laser[MAX_LASERS];  // Add laser visibility toggles
     int active_laser;      // Currently selected laser
     int selected_threat;   // Currently selected threat
-    bool laser_engaged;    // Whether the laser is engaged
+    bool show_help;    // Add help visibility toggle
     Camera2DEx camera;
 } GameState;
 
@@ -199,11 +199,50 @@ void draw_grid(Camera2D* cam, float grid_size) {
     }
 }
 
-void draw_hud(AirSim* sim, GameState* state) {
-    // Make HUD background taller to accommodate controls
-    DrawRectangle(0, 0, WINDOW_WIDTH, 100, (Color){255, 255, 255, 200});
+// Add new function to draw help panel
+void draw_help_panel(void) {
+    const char* help_text[] = {
+        "F1 - Toggle Help",
+        "SPACE - Pause/Resume",
+        "R - Reset Simulation",
+        "P - Toggle Threat Paths",
+        "TAB - Debug Info",
+        "MMB / Wheel /  - Pan / Zoom Camera",
+        "LEFT/RIGHT→ - Select Threat",
+        "UP/DOWN - Select Laser",  // Added new control hint
+        "ENTER/BACKSPACE - Engage/Disengage Laser",
+        "1-5 - Toggle Laser View",
+        "CLICK - Step Forward",  // Added new control hint
+        "ESC - Quit"
+    };
     
-    // Existing HUD info
+    int num_lines = sizeof(help_text) / sizeof(help_text[0]);
+    int line_height = 25;
+    int padding = 10;
+    int width = 250;
+    int height = num_lines * line_height + 2 * padding;
+    
+    // Draw semi-transparent background
+    DrawRectangle(WINDOW_WIDTH - width - padding, padding, 
+                 width, height, 
+                 (Color){255, 255, 255, 230});
+    
+    // Draw help text
+    for (int i = 0; i < num_lines; i++) {
+        DrawText(help_text[i], 
+                WINDOW_WIDTH - width, 
+                padding + i * line_height, 
+                20, DARKGRAY);
+    }
+}
+
+void draw_hud(AirSim* sim, GameState* state) {
+    // Top HUD - Aircraft info and sim status
+    DrawRectangle(0, 0, WINDOW_WIDTH, 60, (Color){255, 255, 255, 200});
+    
+    // Draw F1 help hint always
+    DrawText("F1 - Toggle Help", WINDOW_WIDTH - 150, 10, 20, DARKGRAY);
+    
     DrawText(TextFormat("Aircraft Pos: (%.0f, %.0f, %.0f)", 
         sim->aircraft_x, sim->aircraft_y, sim->aircraft_z), 10, 10, 20, BLACK);
     DrawText(TextFormat("Step: %d Time: %.1fs %s %s", 
@@ -212,34 +251,33 @@ void draw_hud(AirSim* sim, GameState* state) {
         sim->terminal ? "TERMINAL" : ""), 
         10, 35, 20, sim->terminal ? RED : BLACK);
 
-    // Add keyboard controls info
-    DrawText("SPACE-Pause  R-Reset  P-TogglePaths  TAB-Debug  MMB-Pan  Wheel-Zoom  ESC-Quit",
-        10, 60, 20, DARKGRAY);
-        
-    // Add laser status to controls line
-    DrawText("1-5:ToggleLasers ", 
-        10, 80, 20, DARKGRAY);
+    // Draw help panel if enabled
+    if (state->show_help) {
+        draw_help_panel();
+    }
     
-    // Show laser states
+    // Bottom HUD - Controls and status
+    DrawRectangle(0, WINDOW_HEIGHT - 90, WINDOW_WIDTH, 90, (Color){255, 255, 255, 200});
+    
+    // First line - Status only - now reading engagement from sim directly
+    bool is_engaged = (sim->lasers[state->active_laser].engaging_threat >= 0);
+    DrawText(TextFormat("Active Laser: L%d  Selected Threat: %d  %s", 
+        state->active_laser + 1, 
+        state->selected_threat + 1,
+        is_engaged ? "ENGAGED" : ""),
+        10, WINDOW_HEIGHT - 80, 20, is_engaged ? BLUE : DARKGRAY);
+    
+    // Second line - Laser visibility toggles
+    DrawText("Laser Status: ", 10, WINDOW_HEIGHT - 45, 20, DARKGRAY);
     for (int i = 0; i < MAX_LASERS; i++) {
         if (sim->lasers[i].type > 0) {
             Color color = state->show_laser[i] ? BLUE : DARKGRAY;
             DrawText(TextFormat("L%d", i+1), 
-                    200 + i*40, 80, 20, color);
+                    150 + i*40, WINDOW_HEIGHT - 45, 20, color);
         }
     }
 
-    // Show laser control info
-    DrawText(TextFormat("Active Laser: %d  Selected Threat: %d  %s", 
-        state->active_laser + 1, 
-        state->selected_threat + 1,
-        state->laser_engaged ? "ENGAGED" : ""),
-        10, 80, 20, DARKGRAY);
-    
-    DrawText("Arrow Keys-Select Threat  ENTER-Engage Laser",
-        400, 80, 20, DARKGRAY);
-
-    // Terminal state indicator remains the same
+    // Terminal state indicator in center screen
     if (sim->terminal) {
         const char* text = "TERMINAL STATE";
         int fontSize = 40;
@@ -297,6 +335,27 @@ int find_next_active_threat(AirSim* sim, int current, bool forward) {
     return current; // Keep current if no other active threats found
 }
 
+// Add function to reset UI state
+void reset_ui_state(GameState* state) {
+    state->paused = true;
+    state->show_debug = false;
+    state->show_threat_paths = true;
+    state->selected_threat = 0;
+    
+    // Keep only first laser visible
+    for (int i = 0; i < MAX_LASERS; i++) {
+        state->show_laser[i] = (i == 0);
+    }
+    state->active_laser = 0;
+    
+    // Don't reset help visibility
+    // state->show_help = false;
+    
+    // Reset camera zoom but keep position
+    state->camera.zoom_target = PIXELS_PER_METER * 4.0f;
+    state->camera.cam.zoom = PIXELS_PER_METER * 4.0f;
+}
+
 int main() {
     // Initialize simulation
     AirSim sim = {
@@ -319,10 +378,10 @@ int main() {
         .paused = true,
         .show_debug = false,
         .show_threat_paths = true, 
-        .show_laser = {true, true, true, true, true},  // Start with all lasers visible
+        .show_laser = {true, false, false, false, false},  // Start with first laser visible
         .active_laser = 0,
         .selected_threat = 0,
-        .laser_engaged = false,
+        .show_help = false,  // Start with help hidden
         .camera = {
             .cam = {
                 .zoom = PIXELS_PER_METER * 4.0f, // don't change this
@@ -338,8 +397,15 @@ int main() {
 
     while (!WindowShouldClose()) {
         // Input handling
+        if (IsKeyPressed(KEY_F1)) state.show_help = !state.show_help;
         if (IsKeyPressed(KEY_SPACE)) state.paused = !state.paused;
-        if (IsKeyPressed(KEY_R)) reset(&sim);
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) { // Mouse click to step
+            step(&sim);
+        }
+        if (IsKeyPressed(KEY_R)) {
+            reset(&sim);
+            reset_ui_state(&state);
+        }
         if (IsKeyPressed(KEY_TAB)) state.show_debug = !state.show_debug;
         if (IsKeyPressed(KEY_P)) state.show_threat_paths = !state.show_threat_paths;  // Add 'P' key toggle
         
@@ -347,6 +413,22 @@ int main() {
         for (int i = 0; i < MAX_LASERS; i++) {
             if (IsKeyPressed(KEY_ONE + i)) {
                 state.show_laser[i] = !state.show_laser[i];
+            }
+        }
+        
+        // Handle laser selection with up/down keys
+        if (IsKeyPressed(KEY_UP)) {
+            state.active_laser = (state.active_laser - 1 + MAX_LASERS) % MAX_LASERS;
+            // Only select active lasers
+            while (sim.lasers[state.active_laser].type == 0) {
+                state.active_laser = (state.active_laser - 1 + MAX_LASERS) % MAX_LASERS;
+            }
+        }
+        if (IsKeyPressed(KEY_DOWN)) {
+            state.active_laser = (state.active_laser + 1) % MAX_LASERS;
+            // Only select active lasers
+            while (sim.lasers[state.active_laser].type == 0) {
+                state.active_laser = (state.active_laser + 1) % MAX_LASERS;
             }
         }
         
@@ -358,16 +440,15 @@ int main() {
             state.selected_threat = find_next_active_threat(&sim, state.selected_threat, false);
         }
         
-        // Handle laser engagement with enter
+        // Handle laser engagement (ENTER to engage, BACKSPACE to disengage)
         if (IsKeyPressed(KEY_ENTER)) {
             if (sim.threats[state.selected_threat].type > 0) {
-                state.laser_engaged = !state.laser_engaged;
-                if (state.laser_engaged) {
-                    sim.lasers[state.active_laser].engaging_threat = state.selected_threat;
-                } else {
-                    sim.lasers[state.active_laser].engaging_threat = -1;
-                }
+                printf("[Step %d] Keyboard command to Laser %d engaging threat %d\n", sim.steps, state.active_laser, state.selected_threat);
+                sim.lasers[state.active_laser].engaging_threat = state.selected_threat;
             }
+        }
+        if (IsKeyPressed(KEY_BACKSPACE)) {
+            sim.lasers[state.active_laser].engaging_threat = -1;
         }
         
         // Update simulation if not paused and not terminal
