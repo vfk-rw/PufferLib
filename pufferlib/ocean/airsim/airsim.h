@@ -225,7 +225,6 @@ void step_threats(AirSim* sim) {
 
 void slew_lasers(AirSim* sim) {
     for (int i = 0; i < MAX_LASERS; i++) {
-               
         if (sim->lasers[i].type > 0 && sim->lasers[i].engaging_threat >= 0) {
             int threat_idx = sim->lasers[i].engaging_threat;
             printf("[Step %d] SlewLasers: Laser %d attempting to engage threat %d (type=%d)\n", sim->steps,
@@ -257,9 +256,9 @@ void slew_lasers(AirSim* sim) {
                 sim->lasers[i].az = fmodf(sim->lasers[i].az + az_diff + 360.0f, 360.0f);
                 sim->lasers[i].el = fminf(90.0f, fmaxf(-90.0f, sim->lasers[i].el + el_diff));
             } else {
-                printf("[Step %d] SlewLasers: Laser %d target threat %d is inactive, disengaging\n", sim->steps,
+                // Don't reset engagement - let manual control handle this
+                printf("[Step %d] SlewLasers: Laser %d target threat %d is inactive\n", sim->steps,
                        i, threat_idx);
-                sim->lasers[i].engaging_threat = -1;  // Disengage if threat is inactive
             }
         }
     }

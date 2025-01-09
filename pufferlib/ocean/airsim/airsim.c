@@ -2,10 +2,33 @@
 #include <stdio.h>
 
 // Window/display settings
-#define WINDOW_WIDTH 1024
-#define WINDOW_HEIGHT 768
+#define WINDOW_WIDTH 1920
+#define WINDOW_HEIGHT 1080
 #define GRID_SIZE 100.0f  // Size of each grid square in meters
-#define PIXELS_PER_METER 0.1f // Scale for rendering
+#define PIXELS_PER_METER 0.2f // Scale for rendering
+#define RANGE_TEXT_SIZE 30
+
+// Add laser color definitions
+#define MAX_COLORS 5
+const Color LASER_COLORS[MAX_COLORS] = {
+    (Color){0, 128, 255, 255},    // Bright blue
+    (Color){128, 0, 255, 255},    // Purple
+    (Color){0, 64, 196, 255},     // Dark blue
+    (Color){128, 0, 196, 255},    // Dark purple
+    (Color){64, 64, 255, 255}     // Medium blue
+};
+
+// Add HP bar settings at top with other constants
+#define HP_BAR_WIDTH 60.0f
+#define HP_BAR_HEIGHT 8.0f
+#define HP_BAR_PADDING 5.0f
+
+// Helper to get laser color with custom alpha
+Color get_laser_color(int laser_idx, unsigned char alpha) {
+    Color c = LASER_COLORS[laser_idx];
+    c.a = alpha;
+    return c;
+}
 
 typedef struct Camera2DEx {
     Camera2D cam;
@@ -32,29 +55,30 @@ Vector2 world_to_screen(Camera2D* cam, float x, float y) {
 
 // Add new function to draw threat selection bracket
 void draw_threat_bracket(Camera2D* cam, Vector2 pos, bool is_selected) {
-    float size = 20.0f;
+    float size = 25.0f;
+    float thickness = 4.0f;
     Color color = is_selected ? BLACK : (Color){128, 128, 128, 128};
     
     // Draw selection bracket
     DrawLineEx((Vector2){pos.x - size, pos.y - size}, 
-               (Vector2){pos.x - size/2, pos.y - size}, 2, color);
+               (Vector2){pos.x - size/2, pos.y - size}, thickness, color);
     DrawLineEx((Vector2){pos.x - size, pos.y - size}, 
-               (Vector2){pos.x - size, pos.y - size/2}, 2, color);
+               (Vector2){pos.x - size, pos.y - size/2}, thickness, color);
                
     DrawLineEx((Vector2){pos.x + size, pos.y - size}, 
-               (Vector2){pos.x + size/2, pos.y - size}, 2, color);
+               (Vector2){pos.x + size/2, pos.y - size}, thickness, color);
     DrawLineEx((Vector2){pos.x + size, pos.y - size}, 
-               (Vector2){pos.x + size, pos.y - size/2}, 2, color);
+               (Vector2){pos.x + size, pos.y - size/2}, thickness, color);
                
     DrawLineEx((Vector2){pos.x - size, pos.y + size}, 
-               (Vector2){pos.x - size/2, pos.y + size}, 2, color);
+               (Vector2){pos.x - size/2, pos.y + size}, thickness, color);
     DrawLineEx((Vector2){pos.x - size, pos.y + size}, 
-               (Vector2){pos.x - size, pos.y + size/2}, 2, color);
+               (Vector2){pos.x - size, pos.y + size/2}, thickness, color);
                
     DrawLineEx((Vector2){pos.x + size, pos.y + size}, 
-               (Vector2){pos.x + size/2, pos.y + size}, 2, color);
+               (Vector2){pos.x + size/2, pos.y + size}, thickness, color);
     DrawLineEx((Vector2){pos.x + size, pos.y + size}, 
-               (Vector2){pos.x + size, pos.y + size/2}, 2, color);
+               (Vector2){pos.x + size, pos.y + size/2}, thickness, color);
 }
 
 void draw_laser_arc(Camera2D* cam, AirSim* sim, int laser_idx, bool is_active) {
@@ -70,10 +94,10 @@ void draw_laser_arc(Camera2D* cam, AirSim* sim, int laser_idx, bool is_active) {
     float start_angle = az_rad - fov_rad;
     float end_angle = az_rad + fov_rad;
     
-    // Adjust transparency based on whether this is the active laser
-    Color fill_color = {0, 255, 255, is_active ? 32 : 8};
-    Color line_color = {0, 128, 255, is_active ? 255 : 64};
-    Color text_color = {0, 128, 255, is_active ? 255 : 64};
+    // Get base color for this laser
+    Color fill_color = get_laser_color(laser_idx, is_active ? 32 : 8);
+    Color line_color = get_laser_color(laser_idx, is_active ? 255 : 64);
+    Color text_color = get_laser_color(laser_idx, is_active ? 255 : 64);
     
     // Draw arc fill with transparency
     DrawCircleSector(pos, range, 
@@ -92,7 +116,7 @@ void draw_laser_arc(Camera2D* cam, AirSim* sim, int laser_idx, bool is_active) {
         pos.x + cosf(az_rad) * range,
         pos.y + sinf(az_rad) * range
     };
-    DrawLineEx(pos, end, 2, (Color){0, 128, 255, is_active ? 128 : 32});
+    DrawLineEx(pos, end, 2, get_laser_color(laser_idx, is_active ? 128 : 32));
     
     if (is_active) {
         DrawText(TextFormat("El: %.1f°", laser->el),
@@ -104,19 +128,17 @@ void draw_laser_arc(Camera2D* cam, AirSim* sim, int laser_idx, bool is_active) {
 void draw_aircraft(Camera2D* cam, AirSim* sim, GameState* state) {
     Vector2 pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
     
-    // Draw larger blue triangle pointing in x direction
-    float size = 30.0f;  // Reduced size to be more reasonable
-
+    float size = 30.0f;
     
     // Draw triangle relative to screen position
     Vector2 v1 = {pos.x + size, pos.y};
     Vector2 v2 = {pos.x - size/2, pos.y + size/2};
     Vector2 v3 = {pos.x - size/2, pos.y - size/2};
     
-    DrawTriangle(v1, v2, v3, DARKBLUE);
+    DrawTriangle(v1, v2, v3, BLACK);
     
-    // Draw outline for better visibility
-    DrawTriangleLines(v1, v2, v3, BLUE);
+    // Draw outline for better visibility with slightly lighter color
+    DrawTriangleLines(v1, v2, v3, GRAY);
     
     // Debug text showing position
     if (IsKeyDown(KEY_TAB)) {
@@ -137,19 +159,35 @@ void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths, int selected_thre
         if (sim->threats[i].type > 0) {
             Vector2 pos = world_to_screen(cam, sim->threats[i].x, sim->threats[i].y);
             
-            // Draw threat dot
-            DrawCircleV(pos, 5.0f, RED);
+            // Draw threat dot sized to lethal radius
+            float lethal_radius = sim->threats[i].lethal_radius * cam->zoom;
+            DrawCircleV(pos, lethal_radius, RED);
             
-            // Draw range to aircraft with larger text
+            // Only draw engagement radius for selected threat
+            if (i == selected_threat) {
+                float radius = sim->threats[i].engagement_radius * cam->zoom;
+                DrawCircleLines(pos.x, pos.y, radius, RED);
+            }
+            
+            // Draw range text
             float dist = compute_distance(
                 sim->threats[i].x, sim->threats[i].y, sim->threats[i].z,
                 sim->aircraft_x, sim->aircraft_y, sim->aircraft_z
             );
-            DrawText(TextFormat("%.0fm", dist), pos.x + 10, pos.y - 15, 25, BLACK);  // Increased size to 25
+            DrawText(TextFormat("%.0fm", dist), pos.x + 10, pos.y - 15, RANGE_TEXT_SIZE, BLACK);
             
-            // Draw engagement radius
-            float radius = sim->threats[i].engagement_radius * cam->zoom;
-            DrawCircleLines(pos.x, pos.y, radius, RED);
+            // Draw HP bar above range text
+            Vector2 bar_pos = {pos.x + 10, pos.y - 15 - HP_BAR_HEIGHT - HP_BAR_PADDING};
+            float hp_fraction = sim->threats[i].hp / 100.0f;  // Assuming max HP is 100
+            
+            // Bar background
+            DrawRectangle(bar_pos.x, bar_pos.y, HP_BAR_WIDTH, HP_BAR_HEIGHT, GRAY);
+            // HP remaining
+            DrawRectangle(bar_pos.x, bar_pos.y, 
+                         HP_BAR_WIDTH * hp_fraction, HP_BAR_HEIGHT, 
+                         RED);
+            // Bar outline
+            DrawRectangleLines(bar_pos.x, bar_pos.y, HP_BAR_WIDTH, HP_BAR_HEIGHT, BLACK);
 
             // Draw dotted line path to aircraft if enabled
             if (show_paths) {
@@ -261,17 +299,18 @@ void draw_hud(AirSim* sim, GameState* state) {
     
     // First line - Status only - now reading engagement from sim directly
     bool is_engaged = (sim->lasers[state->active_laser].engaging_threat >= 0);
+    Color status_color = is_engaged ? LASER_COLORS[state->active_laser] : DARKGRAY;
     DrawText(TextFormat("Active Laser: L%d  Selected Threat: %d  %s", 
         state->active_laser + 1, 
         state->selected_threat + 1,
         is_engaged ? "ENGAGED" : ""),
-        10, WINDOW_HEIGHT - 80, 20, is_engaged ? BLUE : DARKGRAY);
+        10, WINDOW_HEIGHT - 80, 20, status_color);
     
     // Second line - Laser visibility toggles
     DrawText("Laser Status: ", 10, WINDOW_HEIGHT - 45, 20, DARKGRAY);
     for (int i = 0; i < MAX_LASERS; i++) {
         if (sim->lasers[i].type > 0) {
-            Color color = state->show_laser[i] ? BLUE : DARKGRAY;
+            Color color = state->show_laser[i] ? LASER_COLORS[i] : DARKGRAY;
             DrawText(TextFormat("L%d", i+1), 
                     150 + i*40, WINDOW_HEIGHT - 45, 20, color);
         }
