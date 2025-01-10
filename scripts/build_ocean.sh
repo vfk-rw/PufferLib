@@ -68,19 +68,23 @@ echo ${FLAGS[@]}
 if [ "$MODE" = "local" ]; then
     echo "Building $ENV for local testing..."
     if [ "$PLATFORM" = "Linux" ]; then
-        # Add config.c and log.c to compilation
+        # Add log.c to compilation and fix yaml linking
         clang -g -O0 ${FLAGS[@]} \
             "$SRC_DIR/ffmpeg_linux.c" \
-            $YAML_FLAGS \
+            "$SRC_DIR/log.c" \
+            -lyaml \
             -fsanitize=address,undefined,bounds,pointer-overflow,leak
     else
-        clang -g -O0 ${FLAGS[@]} "$SRC_DIR/config.c" "$SRC_DIR/log.c" $YAML_FLAGS
+        clang -g -O0 ${FLAGS[@]} \
+            "$SRC_DIR/log.c" \
+            -lyaml
     fi  
 elif [ "$MODE" = "fast" ]; then
     echo "Building optimized $ENV for local testing..."
     clang -pg -O2 ${FLAGS[@]} \
         "$SRC_DIR/ffmpeg_linux.c" \
-        $YAML_FLAGS
+        "$SRC_DIR/log.c" \
+        -lyaml
     echo "Built to: $ENV"
 else
     echo "Invalid mode specified: local|fast|web"

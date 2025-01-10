@@ -1,9 +1,14 @@
 /* header-only impl file for airsim RL env. */
+#ifndef AIRSIM_H
+#define AIRSIM_H
+
 #include <stdlib.h>
 #include <stdbool.h>
 #include <math.h>
 #include "raylib.h"
 #include <stdio.h> // Added to declare printf and fprintf
+#include <string.h>
+#include "yaml.h"
 
 #define MAX_THREATS 10
 #define MAX_LASERS 5
@@ -17,6 +22,11 @@
 
 #include "log.h"
 
+// Forward declare log functions
+LogBuffer* allocate_logbuffer(int size);
+void free_logbuffer(LogBuffer* buffer);
+void add_log(LogBuffer* logs, Log* log);
+Log aggregate_and_clear(LogBuffer* logs);
 
 typedef struct Threat {
     int type;
@@ -78,6 +88,263 @@ typedef struct AirSim {
     Log log;
 } AirSim;
 
+
+typedef struct SimConfig {
+    // Global simulation parameters
+    float initial_distance;
+    float aircraft_speed;
+    float threat_acceleration;
+    float threat_max_velocity;
+    float engagement_radius;
+    float dt;
+    float max_time;
+    int max_steps;
+
+    // Type definitions
+    struct {
+        float track_rate;
+        float fov;
+        float guidance_reduction;
+        float maximum_range;
+    } laser_types[10];  // Support up to 10 types
+
+    struct {
+        float fov;
+        float track_rate;
+        float guidance_gain;
+        float engagement_radius;
+        float lethal_radius;
+        float acceleration;
+        float max_velocity;
+        float lifetime;
+    } threat_types[10];  // Support up to 10 types
+
+    // Entity definitions
+    struct {
+        int type;  // 0 = inactive, 1+ = type index
+    } lasers[MAX_LASERS];
+
+    struct {
+        int type;  // 0 = inactive, 1+ = type index
+    } threats[MAX_THREATS];
+} SimConfig;
+
+
+// yaml config loading
+
+// Helper function to safely get float from YAML node
+float get_yaml_float(yaml_document_t* document, yaml_node_t* node, const char* key, float default_value) {
+    if (!node) return default_value;
+    
+    for (int i = 0; i < node->data.mapping.pairs.top - node->data.mapping.pairs.start; i++) {
+        yaml_node_pair_t* pair = node->data.mapping.pairs.start + i;
+        yaml_node_t* key_node = yaml_document_get_node(document, pair->key);
+        if (strcmp((char*)key_node->data.scalar.value, key) == 0) {
+            yaml_node_t* value_node = yaml_document_get_node(document, pair->value);
+            return atof((char*)value_node->data.scalar.value);
+        }
+    }
+    return default_value;
+}
+
+// Helper function to safely get int from YAML node
+int get_yaml_int(yaml_document_t* document, yaml_node_t* node, const char* key, int default_value) {
+    if (!node) return default_value;
+    
+    for (int i = 0; i < node->data.mapping.pairs.top - node->data.mapping.pairs.start; i++) {
+        yaml_node_pair_t* pair = node->data.mapping.pairs.start + i;
+        yaml_node_t* key_node = yaml_document_get_node(document, pair->key);
+        if (strcmp((char*)key_node->data.scalar.value, key) == 0) {
+            yaml_node_t* value_node = yaml_document_get_node(document, pair->value);
+            return atoi((char*)value_node->data.scalar.value);
+        }
+    }
+    return default_value;
+}
+
+// Helper function to get a node by name from a mapping node
+yaml_node_t* get_yaml_node(yaml_document_t* document, yaml_node_t* node, const char* key) {
+    if (!node) return NULL;
+    
+    for (int i = 0; i < node->data.mapping.pairs.top - node->data.mapping.pairs.start; i++) {
+        yaml_node_pair_t* pair = node->data.mapping.pairs.start + i;
+        yaml_node_t* key_node = yaml_document_get_node(document, pair->key);
+        if (strcmp((char*)key_node->data.scalar.value, key) == 0) {
+            return yaml_document_get_node(document, pair->value);
+        }
+    }
+    return NULL;
+}
+
+SimConfig* load_config(const char* filename) {
+    FILE* file = fopen(filename, "rb");
+    if (!file) {
+        fprintf(stderr, "Failed to open config file: %s\n", filename);
+        return NULL;
+    }
+
+    yaml_parser_t parser;
+    yaml_document_t document;
+    SimConfig* config = NULL;
+
+    if (!yaml_parser_initialize(&parser)) {
+        fclose(file);
+        return NULL;
+    }
+
+    yaml_parser_set_input_file(&parser, file);
+
+    if (!yaml_parser_load(&parser, &document)) {
+        yaml_parser_delete(&parser);
+        fclose(file);
+        return NULL;
+    }
+
+    config = (SimConfig*)calloc(1, sizeof(SimConfig));
+    if (!config) {
+        yaml_document_delete(&document);
+        yaml_parser_delete(&parser);
+        fclose(file);
+        return NULL;
+    }
+
+    // Get root node
+    yaml_node_t* root = yaml_document_get_root_node(&document);
+    if (!root) goto cleanup;
+
+    // Load simulation settings
+    yaml_node_t* sim_node = get_yaml_node(&document, root, "simulation");
+    if (sim_node) {
+        config->initial_distance = get_yaml_float(&document, sim_node, "initial_distance", 1000.0f);
+        config->aircraft_speed = get_yaml_float(&document, sim_node, "aircraft_speed", 100.0f);
+        config->threat_acceleration = get_yaml_float(&document, sim_node, "threat_acceleration", 400.0f);
+        config->threat_max_velocity = get_yaml_float(&document, sim_node, "threat_max_velocity", 1000.0f);
+        config->engagement_radius = get_yaml_float(&document, sim_node, "engagement_radius", 2500.0f);
+        config->dt = get_yaml_float(&document, sim_node, "dt", 0.016f);
+        config->max_time = get_yaml_float(&document, sim_node, "max_time", 60.0f);
+        config->max_steps = get_yaml_int(&document, sim_node, "max_steps", 6000);
+    }
+
+    // Load laser types
+    yaml_node_t* laser_types = get_yaml_node(&document, root, "laser_types");
+    if (laser_types) {
+        for (int i = 0; i < laser_types->data.mapping.pairs.top - laser_types->data.mapping.pairs.start; i++) {
+            yaml_node_pair_t* pair = laser_types->data.mapping.pairs.start + i;
+            yaml_node_t* key_node = yaml_document_get_node(&document, pair->key);
+            yaml_node_t* value_node = yaml_document_get_node(&document, pair->value);
+            
+            int type_idx = atoi((char*)key_node->data.scalar.value);
+            if (type_idx > 0 && type_idx < 10) {
+                config->laser_types[type_idx].track_rate = get_yaml_float(&document, value_node, "track_rate", 60.0f);
+                config->laser_types[type_idx].fov = get_yaml_float(&document, value_node, "fov", 5.0f);
+                config->laser_types[type_idx].guidance_reduction = get_yaml_float(&document, value_node, "guidance_reduction", 1.0f);
+                config->laser_types[type_idx].maximum_range = get_yaml_float(&document, value_node, "maximum_range", 4000.0f);
+            }
+        }
+    }
+
+    // Load threat types
+    yaml_node_t* threat_types = get_yaml_node(&document, root, "threat_types");
+    if (threat_types) {
+        for (int i = 0; i < threat_types->data.mapping.pairs.top - threat_types->data.mapping.pairs.start; i++) {
+            yaml_node_pair_t* pair = threat_types->data.mapping.pairs.start + i;
+            yaml_node_t* key_node = yaml_document_get_node(&document, pair->key);
+            yaml_node_t* value_node = yaml_document_get_node(&document, pair->value);
+            
+            int type_idx = atoi((char*)key_node->data.scalar.value);
+            if (type_idx > 0 && type_idx < 10) {
+                config->threat_types[type_idx].fov = get_yaml_float(&document, value_node, "fov", 30.0f);
+                config->threat_types[type_idx].track_rate = get_yaml_float(&document, value_node, "track_rate", 100.0f);
+                config->threat_types[type_idx].guidance_gain = get_yaml_float(&document, value_node, "guidance_gain", 1.0f);
+                config->threat_types[type_idx].engagement_radius = get_yaml_float(&document, value_node, "engagement_radius", 2500.0f);
+                config->threat_types[type_idx].lethal_radius = get_yaml_float(&document, value_node, "lethal_radius", 30.0f);
+                config->threat_types[type_idx].acceleration = get_yaml_float(&document, value_node, "acceleration", 400.0f);
+                config->threat_types[type_idx].max_velocity = get_yaml_float(&document, value_node, "max_velocity", 1000.0f);
+                config->threat_types[type_idx].lifetime = get_yaml_float(&document, value_node, "lifetime", 17.0f);
+            }
+        }
+    }
+
+    // Load entity configurations
+    yaml_node_t* entities = get_yaml_node(&document, root, "entities");
+    if (entities) {
+        // Load laser configurations
+        yaml_node_t* lasers = get_yaml_node(&document, entities, "lasers");
+        if (lasers) {
+            for (int i = 0; i < lasers->data.sequence.items.top - lasers->data.sequence.items.start; i++) {
+                if (i >= MAX_LASERS) break;
+                yaml_node_t* laser = yaml_document_get_node(&document, lasers->data.sequence.items.start[i]);
+                config->lasers[i].type = get_yaml_int(&document, laser, "type", 0);
+            }
+        }
+
+        // Load threat configurations
+        yaml_node_t* threats = get_yaml_node(&document, entities, "threats");
+        if (threats) {
+            for (int i = 0; i < threats->data.sequence.items.top - threats->data.sequence.items.start; i++) {
+                if (i >= MAX_THREATS) break;
+                yaml_node_t* threat = yaml_document_get_node(&document, threats->data.sequence.items.start[i]);
+                config->threats[i].type = get_yaml_int(&document, threat, "type", 0);
+            }
+        }
+    }
+
+cleanup:
+    yaml_document_delete(&document);
+    yaml_parser_delete(&parser);
+    fclose(file);
+    return config;
+}
+
+void apply_config(AirSim* sim, SimConfig* config) {
+    // Apply simulation settings
+    sim->initial_distance = config->initial_distance;
+    sim->aircraft_speed = config->aircraft_speed;
+    sim->threat_acceleration = config->threat_acceleration;
+    sim->threat_max_velocity = config->threat_max_velocity;
+    sim->engagement_radius = config->engagement_radius;
+    sim->dt = config->dt;
+    sim->max_time = config->max_time;
+    sim->max_steps = config->max_steps;
+
+    // Apply laser configurations
+    for (int i = 0; i < MAX_LASERS; i++) {
+        int type = config->lasers[i].type;
+        if (type > 0) {
+            sim->lasers[i].type = type;
+            sim->lasers[i].track_rate = config->laser_types[type].track_rate;
+            sim->lasers[i].fov = config->laser_types[type].fov;
+            sim->lasers[i].guidance_reduction = config->laser_types[type].guidance_reduction;
+            sim->lasers[i].maximum_range = config->laser_types[type].maximum_range;
+        } else {
+            sim->lasers[i].type = 0;
+        }
+    }
+
+    // Apply threat configurations
+    for (int i = 0; i < MAX_THREATS; i++) {
+        int type = config->threats[i].type;
+        if (type > 0) {
+            sim->threats[i].type = type;
+            sim->threats[i].fov = config->threat_types[type].fov;
+            sim->threats[i].track_rate = config->threat_types[type].track_rate;
+            sim->threats[i].guidance_gain = config->threat_types[type].guidance_gain;
+            sim->threats[i].engagement_radius = config->threat_types[type].engagement_radius;
+            sim->threats[i].lethal_radius = config->threat_types[type].lethal_radius;
+            sim->threats[i].acceleration = config->threat_types[type].acceleration;
+            sim->threats[i].max_velocity = config->threat_types[type].max_velocity;
+            sim->threats[i].lifetime = config->threat_types[type].lifetime;
+        } else {
+            sim->threats[i].type = 0;
+        }
+    }
+}
+
+void free_config(SimConfig* config) {
+    if (config) {
+        free(config);
+    }
+}
 
 // Helper functions
 float compute_distance(float x1, float y1, float z1, float x2, float y2, float z2) {
@@ -543,3 +810,4 @@ void free_allocated(AirSim* sim) {
     sim->log_buffer = NULL;
 }
 
+#endif

@@ -8,6 +8,23 @@ simulation:
   max_time: 60.0
   max_steps: 6000
 
+initial_conditions:
+  aircraft:
+    position: [0.0, 0.0, 1000.0]
+    velocity: [100.0, 0.0, 0.0]
+  # just position for threats. if null, threats will be randomly placed within 1km - 5km ground range and 300m-1000m altitude
+  threats:
+    - position: [1000.0, -1000.0, 300.0]
+    - position: [-1000.0, 1000.0, 300.0]
+    - position: [2000.0, 2000.0, 1000.0]
+    - position: null
+    - position: null
+    - position: null
+    - position: null
+    - position: null
+    - position: null
+    - position: null
+
 laser_types:
   1:  # Basic laser
     track_rate: 60.0
@@ -51,7 +68,7 @@ entities:
   threats:
     - type: 1  # Basic missile
     - type: 2  # Advanced missile
-    - type: 1  # Basic missile
+    - type: 2  # Advanced missile
     - type: 0  # Inactive
     - type: 0  # Inactive
     - type: 0  # Inactive

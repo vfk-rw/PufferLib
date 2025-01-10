@@ -488,6 +488,14 @@ int main() {
 
     reset(&sim);
 
+    // Load configuration AFTER reset
+    SimConfig* config = load_config("pufferlib/ocean/airsim/example.yaml");
+    if (config) {
+        printf("Loaded configuration from example.yaml\n");
+        apply_config(&sim, config);
+        free_config(config);
+    }
+    
     while (!WindowShouldClose()) {
         // Input handling
         if (IsKeyPressed(KEY_F1)) state.show_help = !state.show_help;
