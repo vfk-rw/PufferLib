@@ -1,3 +1,5 @@
+/* visualization for airsim RL env. */
+
 #include "airsim.h"
 #include "ffmpeg.h"
 #include <stdio.h>

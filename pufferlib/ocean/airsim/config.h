@@ -1,3 +1,4 @@
+/* load airsim settings  and parameters from yaml file */
 #ifndef AIRSIM_CONFIG_H
 #define AIRSIM_CONFIG_H
 
@@ -43,12 +44,15 @@ typedef struct SimConfig {
     } threats[MAX_THREATS];
 } SimConfig;
 
+// TODO: implement this
 // Load config from YAML file
 SimConfig* load_config(const char* filename);
 
+// TODO: implement this
 // Apply config to simulation
 void apply_config(AirSim* sim, SimConfig* config);
 
+// TODO: implement this
 // Free config
 void free_config(SimConfig* config);
 
