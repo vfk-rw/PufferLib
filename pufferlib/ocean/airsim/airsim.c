@@ -7,18 +7,18 @@
 // Window/display settings
 #define WINDOW_WIDTH 1920
 #define WINDOW_HEIGHT 1080
-#define GRID_SIZE 100.0f  // Size of each grid square in meters
+#define GRID_SIZE 100.0f      // Size of each grid square in meters
 #define PIXELS_PER_METER 0.2f // Scale for rendering
 #define RANGE_TEXT_SIZE 30
 
 // Add laser color definitions
 #define MAX_COLORS 5
 const Color LASER_COLORS[MAX_COLORS] = {
-    (Color){0, 128, 255, 255},    // Bright blue
-    (Color){128, 0, 255, 255},    // Purple
-    (Color){0, 64, 196, 255},     // Dark blue
-    (Color){128, 0, 196, 255},    // Dark purple
-    (Color){64, 64, 255, 255}     // Medium blue
+    (Color){0, 128, 255, 255}, // Bright blue
+    (Color){128, 0, 255, 255}, // Purple
+    (Color){0, 64, 196, 255},  // Dark blue
+    (Color){128, 0, 196, 255}, // Dark purple
+    (Color){64, 64, 255, 255}  // Medium blue
 };
 
 // Add HP bar settings at top with other constants
@@ -27,225 +27,245 @@ const Color LASER_COLORS[MAX_COLORS] = {
 #define HP_BAR_PADDING 5.0f
 
 // Helper to get laser color with custom alpha
-Color get_laser_color(int laser_idx, unsigned char alpha) {
+Color get_laser_color(int laser_idx, unsigned char alpha)
+{
     Color c = LASER_COLORS[laser_idx];
     c.a = alpha;
     return c;
 }
 
-typedef struct Camera2DEx {
+typedef struct Camera2DEx
+{
     Camera2D cam;
     float zoom_target;
     Vector2 offset_target;
 } Camera2DEx;
 
-typedef struct {
+typedef struct
+{
     bool paused;
     bool show_debug;
-    bool show_threat_paths;  // Add new toggle for threat paths
-    bool show_laser[MAX_LASERS];  // Add laser visibility toggles
-    int active_laser;      // Currently selected laser
-    int selected_threat;   // Currently selected threat
-    bool show_help;    // Add help visibility toggle
+    bool show_threat_paths;      // Add new toggle for threat paths
+    bool show_laser[MAX_LASERS]; // Add laser visibility toggles
+    int active_laser;            // Currently selected laser
+    int selected_threat;         // Currently selected threat
+    bool show_help;              // Add help visibility toggle
     Camera2DEx camera;
-    bool recording;  // Add recording state flag
-    FFMPEG* ffmpeg;  // Add ffmpeg handle
+    bool recording; // Add recording state flag
+    FFMPEG *ffmpeg; // Add ffmpeg handle
 } GameState;
 
 // Convert simulation coordinates to screen coordinates
-Vector2 world_to_screen(Camera2D* cam, float x, float y) {
+Vector2 world_to_screen(Camera2D *cam, float x, float y)
+{
     Vector2 world = {x, y};
     return GetWorldToScreen2D(world, *cam);
 }
 
 // Add new function to draw threat selection bracket
-void draw_threat_bracket(Camera2D* cam, Vector2 pos, bool is_selected) {
+void draw_threat_bracket(Camera2D *cam, Vector2 pos, bool is_selected)
+{
     float size = 25.0f;
     float thickness = 4.0f;
     Color color = is_selected ? BLACK : (Color){128, 128, 128, 128};
-    
+
     // Draw selection bracket
-    DrawLineEx((Vector2){pos.x - size, pos.y - size}, 
-               (Vector2){pos.x - size/2, pos.y - size}, thickness, color);
-    DrawLineEx((Vector2){pos.x - size, pos.y - size}, 
-               (Vector2){pos.x - size, pos.y - size/2}, thickness, color);
-               
-    DrawLineEx((Vector2){pos.x + size, pos.y - size}, 
-               (Vector2){pos.x + size/2, pos.y - size}, thickness, color);
-    DrawLineEx((Vector2){pos.x + size, pos.y - size}, 
-               (Vector2){pos.x + size, pos.y - size/2}, thickness, color);
-               
-    DrawLineEx((Vector2){pos.x - size, pos.y + size}, 
-               (Vector2){pos.x - size/2, pos.y + size}, thickness, color);
-    DrawLineEx((Vector2){pos.x - size, pos.y + size}, 
-               (Vector2){pos.x - size, pos.y + size/2}, thickness, color);
-               
-    DrawLineEx((Vector2){pos.x + size, pos.y + size}, 
-               (Vector2){pos.x + size/2, pos.y + size}, thickness, color);
-    DrawLineEx((Vector2){pos.x + size, pos.y + size}, 
-               (Vector2){pos.x + size, pos.y + size/2}, thickness, color);
+    DrawLineEx((Vector2){pos.x - size, pos.y - size},
+               (Vector2){pos.x - size / 2, pos.y - size}, thickness, color);
+    DrawLineEx((Vector2){pos.x - size, pos.y - size},
+               (Vector2){pos.x - size, pos.y - size / 2}, thickness, color);
+
+    DrawLineEx((Vector2){pos.x + size, pos.y - size},
+               (Vector2){pos.x + size / 2, pos.y - size}, thickness, color);
+    DrawLineEx((Vector2){pos.x + size, pos.y - size},
+               (Vector2){pos.x + size, pos.y - size / 2}, thickness, color);
+
+    DrawLineEx((Vector2){pos.x - size, pos.y + size},
+               (Vector2){pos.x - size / 2, pos.y + size}, thickness, color);
+    DrawLineEx((Vector2){pos.x - size, pos.y + size},
+               (Vector2){pos.x - size, pos.y + size / 2}, thickness, color);
+
+    DrawLineEx((Vector2){pos.x + size, pos.y + size},
+               (Vector2){pos.x + size / 2, pos.y + size}, thickness, color);
+    DrawLineEx((Vector2){pos.x + size, pos.y + size},
+               (Vector2){pos.x + size, pos.y + size / 2}, thickness, color);
 }
 
-void draw_laser_arc(Camera2D* cam, AirSim* sim, int laser_idx, bool is_active) {
+void draw_laser_arc(Camera2D *cam, AirSim *sim, int laser_idx, bool is_active)
+{
     Vector2 pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
-    Laser* laser = &sim->lasers[laser_idx];
-    
+    Laser *laser = &sim->lasers[laser_idx];
+
     // Convert angles to radians
     float az_rad = laser->az * PI / 180.0f;
     float fov_rad = laser->fov * PI / 180.0f;
     float range = laser->maximum_range * cam->zoom;
-    
+
     // Draw laser arc
     float start_angle = az_rad - fov_rad;
     float end_angle = az_rad + fov_rad;
-    
+
     // Get base color for this laser
     Color fill_color = get_laser_color(laser_idx, is_active ? 32 : 8);
     Color line_color = get_laser_color(laser_idx, is_active ? 255 : 64);
     Color text_color = get_laser_color(laser_idx, is_active ? 255 : 64);
-    
+
     // Draw arc fill with transparency
-    DrawCircleSector(pos, range, 
-                    start_angle * RAD2DEG, 
-                    end_angle * RAD2DEG, 
-                    32, fill_color);
-                    
+    DrawCircleSector(pos, range,
+                     start_angle * RAD2DEG,
+                     end_angle * RAD2DEG,
+                     32, fill_color);
+
     // Draw arc outline
-    DrawCircleSectorLines(pos, range, 
-                         start_angle * RAD2DEG, 
-                         end_angle * RAD2DEG, 
-                         32, line_color);
-                         
+    DrawCircleSectorLines(pos, range,
+                          start_angle * RAD2DEG,
+                          end_angle * RAD2DEG,
+                          32, line_color);
+
     // Draw center line showing azimuth
     Vector2 end = {
         pos.x + cosf(az_rad) * range,
-        pos.y + sinf(az_rad) * range
-    };
+        pos.y + sinf(az_rad) * range};
     DrawLineEx(pos, end, 2, get_laser_color(laser_idx, is_active ? 128 : 32));
-    
-    if (is_active) {
+
+    if (is_active)
+    {
         DrawText(TextFormat("El: %.1f°", laser->el),
-                pos.x + 40, pos.y - 40 - laser_idx * 20, 
-                15, text_color);
+                 pos.x + 40, pos.y - 40 - laser_idx * 20,
+                 15, text_color);
     }
 }
 
-void draw_aircraft(Camera2D* cam, AirSim* sim, GameState* state) {
+void draw_aircraft(Camera2D *cam, AirSim *sim, GameState *state)
+{
     Vector2 pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
-    
+
     float size = 30.0f;
-    
+
     // Draw triangle relative to screen position
     Vector2 v1 = {pos.x + size, pos.y};
-    Vector2 v2 = {pos.x - size/2, pos.y + size/2};
-    Vector2 v3 = {pos.x - size/2, pos.y - size/2};
-    
+    Vector2 v2 = {pos.x - size / 2, pos.y + size / 2};
+    Vector2 v3 = {pos.x - size / 2, pos.y - size / 2};
+
     DrawTriangle(v1, v2, v3, BLACK);
-    
+
     // Draw outline for better visibility with slightly lighter color
     DrawTriangleLines(v1, v2, v3, GRAY);
-    
+
     // Debug text showing position
-    if (IsKeyDown(KEY_TAB)) {
-        DrawText(TextFormat("Aircraft: (%.0f, %.0f)", pos.x, pos.y), 
-                pos.x + size, pos.y - size, 20, BLACK);
+    if (IsKeyDown(KEY_TAB))
+    {
+        DrawText(TextFormat("Aircraft: (%.0f, %.0f)", pos.x, pos.y),
+                 pos.x + size, pos.y - size, 20, BLACK);
     }
 
     // Draw active laser arcs
-    for (int i = 0; i < MAX_LASERS; i++) {
-        if (state->show_laser[i] && sim->lasers[i].type > 0) {
+    for (int i = 0; i < MAX_LASERS; i++)
+    {
+        if (state->show_laser[i] && sim->lasers[i].type > 0)
+        {
             draw_laser_arc(cam, sim, i, i == state->active_laser);
         }
     }
 }
 
-void draw_threat_fov(Camera2D* cam, Vector2 pos, Threat* threat) {
+void draw_threat_fov(Camera2D *cam, Vector2 pos, Threat *threat)
+{
     float range = threat->engagement_radius * cam->zoom;
     float az_rad = threat->az * PI / 180.0f;
     float fov_rad = threat->fov * PI / 180.0f;
-    
+
     float start_angle = az_rad - fov_rad;
     float end_angle = az_rad + fov_rad;
-    
-    Color fill_color = (Color){255, 0, 0, (unsigned char)(32 * threat->guidance_gain)};
-    Color line_color = (Color){255, 0, 0, (unsigned char)(128 * threat->guidance_gain)};
-    
+
+    // Clamp guidance_gain to [0,1] for opacity calculation
+    float opacity = fminf(1.0f, fmaxf(0.0f, threat->guidance_gain));
+    Color fill_color = (Color){255, 0, 0, (unsigned char)(32 * opacity)};
+    Color line_color = (Color){255, 0, 0, (unsigned char)(128 * opacity)};
+
     // Draw FOV arc
-    DrawCircleSector(pos, range * 0.2f,  // Shorter range for threat FOV visualization
-                    start_angle * RAD2DEG, 
-                    end_angle * RAD2DEG, 
-                    32, fill_color);
-                    
+    DrawCircleSector(pos, range * 0.2f, // Shorter range for threat FOV visualization
+                     start_angle * RAD2DEG,
+                     end_angle * RAD2DEG,
+                     32, fill_color);
+
     DrawCircleSectorLines(pos, range * 0.2f,
-                         start_angle * RAD2DEG, 
-                         end_angle * RAD2DEG, 
-                         32, line_color);
-                         
+                          start_angle * RAD2DEG,
+                          end_angle * RAD2DEG,
+                          32, line_color);
+
     // Draw centerline showing threat's pointing angle
     Vector2 end = {
         pos.x + cosf(az_rad) * range * 0.2f,
-        pos.y + sinf(az_rad) * range * 0.2f
-    };
+        pos.y + sinf(az_rad) * range * 0.2f};
     DrawLineEx(pos, end, 2, line_color);
 }
 
-void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths, int selected_threat) {
-    for (int i = 0; i < MAX_THREATS; i++) {
-        if (sim->threats[i].type > 0) {
-            
+void draw_threats(Camera2D *cam, AirSim *sim, bool show_paths, int selected_threat)
+{
+    for (int i = 0; i < MAX_THREATS; i++)
+    {
+        if (sim->threats[i].type > 0)
+        {
+
             Vector2 pos = world_to_screen(cam, sim->threats[i].x, sim->threats[i].y);
-            
+
             // Draw threat dot sized to lethal radius
             float lethal_radius = sim->threats[i].lethal_radius * cam->zoom;
-            
-            // Draw threat circle with guidance-based opacity
-            Color threat_color = (Color){255, 0, 0, (unsigned char)(255 * sim->threats[i].guidance_gain)};
+
+            // Clamp guidance_gain to [0,1] for opacity calculation
+            float opacity = fminf(1.0f, fmaxf(0.0f, sim->threats[i].guidance_gain));
+            Color threat_color = (Color){255, 0, 0, (unsigned char)(255 * opacity)};
             DrawCircleV(pos, lethal_radius, threat_color);
-            
+
             // Draw outline
             DrawCircleLines(pos.x, pos.y, lethal_radius, BLACK);
-            
+
             // Draw range text
             float dist = compute_distance(
                 sim->threats[i].x, sim->threats[i].y, sim->threats[i].z,
-                sim->aircraft_x, sim->aircraft_y, sim->aircraft_z
-            );
+                sim->aircraft_x, sim->aircraft_y, sim->aircraft_z);
             DrawText(TextFormat("%.0fm", dist), pos.x + 10, pos.y - 15, RANGE_TEXT_SIZE, BLACK);
-            
+
             // Draw lifetime text
-            DrawText(TextFormat("%.1fs", sim->threats[i].lifetime), 
-                    pos.x + 10, pos.y + 5, RANGE_TEXT_SIZE, BLACK);
-            
+            DrawText(TextFormat("%.1fs", sim->threats[i].lifetime),
+                     pos.x + 10, pos.y + 5, RANGE_TEXT_SIZE, BLACK);
+
             // Only draw engagement radius for selected threat
-            if (i == selected_threat) {
+            if (i == selected_threat)
+            {
                 float radius = sim->threats[i].engagement_radius * cam->zoom;
                 DrawCircleLines(pos.x, pos.y, radius, RED);
             }
-            
+
             // Draw dotted line path to aircraft if enabled
-            if (show_paths) {
+            if (show_paths)
+            {
                 Vector2 aircraft_pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
                 float dx = aircraft_pos.x - pos.x;
                 float dy = aircraft_pos.y - pos.y;
-                float len = sqrtf(dx*dx + dy*dy);
-                if (len > 0) {
+                float len = sqrtf(dx * dx + dy * dy);
+                if (len > 0)
+                {
                     dx /= len;
                     dy /= len;
-                    for (float d = 0; d < len; d += 20.0f) {
-                        if ((int)(d/20.0f) % 2 == 0) {  // Draw every other segment
+                    for (float d = 0; d < len; d += 20.0f)
+                    {
+                        if ((int)(d / 20.0f) % 2 == 0)
+                        { // Draw every other segment
                             DrawLineEx(
-                                (Vector2){pos.x + dx*d, pos.y + dy*d},
-                                (Vector2){pos.x + dx*(d+10.0f), pos.y + dy*(d+10.0f)},
+                                (Vector2){pos.x + dx * d, pos.y + dy * d},
+                                (Vector2){pos.x + dx * (d + 10.0f), pos.y + dy * (d + 10.0f)},
                                 2,
-                                RED
-                            );
+                                RED);
                         }
                     }
                 }
             }
-            
+
             // Draw selection bracket if this is the selected threat
-            if (i == selected_threat) {
+            if (i == selected_threat)
+            {
                 draw_threat_bracket(cam, pos, true);
             }
 
@@ -255,27 +275,30 @@ void draw_threats(Camera2D* cam, AirSim* sim, bool show_paths, int selected_thre
     }
 }
 
-void draw_grid(Camera2D* cam, float grid_size) {
-    Vector2 screen_center = GetScreenToWorld2D((Vector2){WINDOW_WIDTH/2, WINDOW_HEIGHT/2}, *cam);
+void draw_grid(Camera2D *cam, float grid_size)
+{
+    Vector2 screen_center = GetScreenToWorld2D((Vector2){WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2}, *cam);
     int grid_cells = 50;
-    
-    float start_x = screen_center.x - (grid_cells/2) * grid_size;
-    float start_y = screen_center.y - (grid_cells/2) * grid_size;
-    
-    for (int i = 0; i <= grid_cells; i++) {
-        Vector2 v1 = world_to_screen(cam, start_x + i*grid_size, start_y);
-        Vector2 v2 = world_to_screen(cam, start_x + i*grid_size, start_y + grid_cells*grid_size);
-        Vector2 h1 = world_to_screen(cam, start_x, start_y + i*grid_size);
-        Vector2 h2 = world_to_screen(cam, start_x + grid_cells*grid_size, start_y + i*grid_size);
-        
+
+    float start_x = screen_center.x - (grid_cells / 2) * grid_size;
+    float start_y = screen_center.y - (grid_cells / 2) * grid_size;
+
+    for (int i = 0; i <= grid_cells; i++)
+    {
+        Vector2 v1 = world_to_screen(cam, start_x + i * grid_size, start_y);
+        Vector2 v2 = world_to_screen(cam, start_x + i * grid_size, start_y + grid_cells * grid_size);
+        Vector2 h1 = world_to_screen(cam, start_x, start_y + i * grid_size);
+        Vector2 h2 = world_to_screen(cam, start_x + grid_cells * grid_size, start_y + i * grid_size);
+
         DrawLineV(v1, v2, (Color){200, 200, 200, 64});
         DrawLineV(h1, h2, (Color){200, 200, 200, 64});
     }
 }
 
 // Add new function to draw help panel
-void draw_help_panel(void) {
-    const char* help_text[] = {
+void draw_help_panel(void)
+{
+    const char *help_text[] = {
         "F1 - Toggle Help",
         "F2 - REC",
         "SPACE - Pause/Resume",
@@ -284,142 +307,155 @@ void draw_help_panel(void) {
         "TAB - Debug Info",
         "MMB / Wheel /  - Pan / Zoom Camera",
         "LEFT/RIGHT→ - Select Threat",
-        "UP/DOWN - Select Laser",  // Added new control hint
+        "UP/DOWN - Select Laser", // Added new control hint
         "ENTER/BACKSPACE - Engage/Disengage Laser",
         "1-5 - Toggle Laser View",
-        "CLICK - Step Forward",  // Added new control hint
-        "ESC - Quit"
-    };
-    
+        "CLICK - Step Forward", // Added new control hint
+        "ESC - Quit"};
+
     int num_lines = sizeof(help_text) / sizeof(help_text[0]);
     int line_height = 25;
     int padding = 10;
     int width = 250;
     int height = num_lines * line_height + 2 * padding;
-    
+
     // Draw semi-transparent background
-    DrawRectangle(WINDOW_WIDTH - width - padding, padding, 
-                 width, height, 
-                 (Color){255, 255, 255, 230});
-    
+    DrawRectangle(WINDOW_WIDTH - width - padding, padding,
+                  width, height,
+                  (Color){255, 255, 255, 230});
+
     // Draw help text
-    for (int i = 0; i < num_lines; i++) {
-        DrawText(help_text[i], 
-                WINDOW_WIDTH - width, 
-                padding + i * line_height, 
-                20, DARKGRAY);
+    for (int i = 0; i < num_lines; i++)
+    {
+        DrawText(help_text[i],
+                 WINDOW_WIDTH - width,
+                 padding + i * line_height,
+                 20, DARKGRAY);
     }
 }
 
-void draw_hud(AirSim* sim, GameState* state) {
+void draw_hud(AirSim *sim, GameState *state)
+{
     // Top HUD - Aircraft info and sim status
     DrawRectangle(0, 0, WINDOW_WIDTH, 60, (Color){255, 255, 255, 200});
-    
+
     // Draw F1 help hint always
     DrawText("F1 - Toggle Help", WINDOW_WIDTH - 150, 10, 20, DARKGRAY);
-    
-    DrawText(TextFormat("Aircraft Pos: (%.0f, %.0f, %.0f)", 
-        sim->aircraft_x, sim->aircraft_y, sim->aircraft_z), 10, 10, 20, BLACK);
-    DrawText(TextFormat("Tick: %d Time: %.1fs %s %s", 
-        sim->ticks, sim->time, 
-        state->paused ? "PAUSED" : "",
-        sim->terminal ? "TERMINAL" : ""), 
-        10, 35, 20, sim->terminal ? RED : BLACK);
+
+    DrawText(TextFormat("Aircraft Pos: (%.0f, %.0f, %.0f)",
+                        sim->aircraft_x, sim->aircraft_y, sim->aircraft_z),
+             10, 10, 20, BLACK);
+    DrawText(TextFormat("Tick: %d Time: %.1fs %s %s",
+                        sim->ticks, sim->time,
+                        state->paused ? "PAUSED" : "",
+                        sim->terminal ? "TERMINAL" : ""),
+             10, 35, 20, sim->terminal ? RED : BLACK);
 
     // Draw help panel if enabled
-    if (state->show_help) {
+    if (state->show_help)
+    {
         draw_help_panel();
     }
-    
+
     // Bottom HUD - Controls and status
     DrawRectangle(0, WINDOW_HEIGHT - 90, WINDOW_WIDTH, 90, (Color){255, 255, 255, 200});
-    
+
     // First line - Status only - now reading engagement from sim directly
     bool is_engaged = (sim->lasers[state->active_laser].engaging_threat >= 0);
     Color status_color = is_engaged ? LASER_COLORS[state->active_laser] : DARKGRAY;
-    DrawText(TextFormat("Active Laser: L%d  Selected Threat: %d  %s", 
-        state->active_laser + 1, 
-        state->selected_threat + 1,
-        is_engaged ? "ENGAGED" : ""),
-        10, WINDOW_HEIGHT - 80, 20, status_color);
-    
+    DrawText(TextFormat("Active Laser: L%d  Selected Threat: %d  %s",
+                        state->active_laser + 1,
+                        state->selected_threat + 1,
+                        is_engaged ? "ENGAGED" : ""),
+             10, WINDOW_HEIGHT - 80, 20, status_color);
+
     // Second line - Laser visibility toggles
     DrawText("Laser Status: ", 10, WINDOW_HEIGHT - 45, 20, DARKGRAY);
-    for (int i = 0; i < MAX_LASERS; i++) {
-        if (sim->lasers[i].type > 0) {
+    for (int i = 0; i < MAX_LASERS; i++)
+    {
+        if (sim->lasers[i].type > 0)
+        {
             Color color = state->show_laser[i] ? LASER_COLORS[i] : DARKGRAY;
-            DrawText(TextFormat("L%d", i+1), 
-                    150 + i*40, WINDOW_HEIGHT - 45, 20, color);
+            DrawText(TextFormat("L%d", i + 1),
+                     150 + i * 40, WINDOW_HEIGHT - 45, 20, color);
         }
     }
 
     // Terminal state indicator in center screen
-    if (sim->terminal) {
-        const char* text = "TERMINAL STATE";
+    if (sim->terminal)
+    {
+        const char *text = "TERMINAL STATE";
         int fontSize = 40;
         int textWidth = MeasureText(text, fontSize);
-        DrawText(text, 
-            (WINDOW_WIDTH - textWidth)/2,
-            WINDOW_HEIGHT/2 - fontSize/2,
-            fontSize, RED);
+        DrawText(text,
+                 (WINDOW_WIDTH - textWidth) / 2,
+                 WINDOW_HEIGHT / 2 - fontSize / 2,
+                 fontSize, RED);
     }
 
     // Add recording indicator
-    if (state->recording) {
+    if (state->recording)
+    {
         DrawText("REC ⚫", WINDOW_WIDTH - 300, 10, 20, RED);
     }
 
     // Add recording indicator to bottom right corner
-    if (state->recording) {
-        const char* rec_text = "REC ⚫";
+    if (state->recording)
+    {
+        const char *rec_text = "REC ⚫";
         int text_width = MeasureText(rec_text, 20);
-        DrawText(rec_text, 
-                WINDOW_WIDTH - text_width - 10,  // 10 pixels from right edge
-                WINDOW_HEIGHT - 30,              // 30 pixels from bottom
-                20, RED);
+        DrawText(rec_text,
+                 WINDOW_WIDTH - text_width - 10, // 10 pixels from right edge
+                 WINDOW_HEIGHT - 30,             // 30 pixels from bottom
+                 20, RED);
     }
 }
 
-void update_camera(Camera2DEx* camera, AirSim* sim) {
+void update_camera(Camera2DEx *camera, AirSim *sim)
+{
     // Add panning with middle mouse button
-    if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE)) {
+    if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE))
+    {
         Vector2 delta = GetMouseDelta();
         camera->cam.offset.x += delta.x;
         camera->cam.offset.y += delta.y;
         camera->offset_target = camera->cam.offset;
-    } else {
+    }
+    else
+    {
         // Center aircraft on screen
         camera->offset_target = (Vector2){
-            WINDOW_WIDTH/2,  // Center x
-            WINDOW_HEIGHT/2  // Center y
+            WINDOW_WIDTH / 2, // Center x
+            WINDOW_HEIGHT / 2 // Center y
         };
-        
+
         camera->cam.target = (Vector2){
             sim->aircraft_x,
-            sim->aircraft_y
-        };
-        
-        //camera->cam.offset.x += (camera->offset_target.x - camera->cam.offset.x) * 0.1f;
-        //camera->cam.offset.y += (camera->offset_target.y - camera->cam.offset.y) * 0.1f;
+            sim->aircraft_y};
+
+        // camera->cam.offset.x += (camera->offset_target.x - camera->cam.offset.x) * 0.1f;
+        // camera->cam.offset.y += (camera->offset_target.y - camera->cam.offset.y) * 0.1f;
     }
-    
+
     // Handle zoom with mouse wheel
     float wheel = GetMouseWheelMove();
-    if (wheel != 0) {
+    if (wheel != 0)
+    {
         camera->zoom_target *= (1.0f + wheel * 0.1f);
         camera->zoom_target = fmaxf(0.1f, fminf(camera->zoom_target, 10.0f));
     }
-    
+
     camera->cam.zoom += (camera->zoom_target - camera->cam.zoom) * 0.1f;
 }
 
 // Add helper function to find next/prev active threat
-int find_next_active_threat(AirSim* sim, int current, bool forward) {
-    for (int i = 0; i < MAX_THREATS; i++) {
-        int idx = forward ? 
-            (current + 1 + i) % MAX_THREATS : 
-            (current - 1 - i + MAX_THREATS) % MAX_THREATS;
-        if (sim->threats[idx].type > 0) {
+int find_next_active_threat(AirSim *sim, int current, bool forward)
+{
+    for (int i = 0; i < MAX_THREATS; i++)
+    {
+        int idx = forward ? (current + 1 + i) % MAX_THREATS : (current - 1 - i + MAX_THREATS) % MAX_THREATS;
+        if (sim->threats[idx].type > 0)
+        {
             return idx;
         }
     }
@@ -427,35 +463,47 @@ int find_next_active_threat(AirSim* sim, int current, bool forward) {
 }
 
 // Add function to reset UI state
-void reset_ui_state(GameState* state) {
+void reset_ui_state(GameState *state, AirSim *sim)
+{
     state->paused = true;
     state->show_debug = false;
     state->show_threat_paths = true;
     state->selected_threat = 0;
-    
-    // Keep only first laser visible
-    for (int i = 0; i < MAX_LASERS; i++) {
-        state->show_laser[i] = (i == 0);
+
+    // Show lasers based on active configuration and find first active laser
+    bool has_active_laser = false;
+    for (int i = 0; i < MAX_LASERS; i++)
+    {
+        state->show_laser[i] = (sim->lasers[i].type > 0);
+        if (sim->lasers[i].type > 0)
+        {
+            has_active_laser = true;
+            state->active_laser = i; // Set to first active laser found
+            break;
+        }
     }
-    state->active_laser = 0;
-    
-    // Don't reset help visibility
-    // state->show_help = false;
-    
+
+    // If no active lasers found, set to 0
+    if (!has_active_laser)
+    {
+        state->active_laser = 0;
+    }
+
     // Reset camera zoom but keep position
     state->camera.zoom_target = PIXELS_PER_METER * 4.0f;
     state->camera.cam.zoom = PIXELS_PER_METER * 4.0f;
 }
 
-int main() {
+int main()
+{
     // Initialize simulation
     AirSim sim = {
-        .initial_distance = 1000.0f,  // Reduced from 2000.0f
+        .initial_distance = 1000.0f, // Reduced from 2000.0f
         .aircraft_speed = 100.0f,
         .threat_acceleration = 400.0f,
         .threat_max_velocity = 1000.0f,
         .engagement_radius = 2500.0f,
-        .dt = 0.016f,          // ~60 FPS
+        .dt = 0.016f, // ~60 FPS
         .max_time = 60.0f,
         .max_steps = 6000,
     };
@@ -468,18 +516,17 @@ int main() {
     GameState state = {
         .paused = true,
         .show_debug = false,
-        .show_threat_paths = true, 
-        .show_laser = {true, false, false, false, false},  // Start with first laser visible
+        .show_threat_paths = true,
+        .show_laser = {true, false, false, false, false}, // Start with first laser visible
         .active_laser = 0,
         .selected_threat = 0,
-        .show_help = false,  // Start with help hidden
+        .show_help = false, // Start with help hidden
         .camera = {
             .cam = {
                 .zoom = PIXELS_PER_METER * 4.0f, // don't change this
-                .offset = {WINDOW_WIDTH/2, WINDOW_HEIGHT/2},
+                .offset = {WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2},
                 .rotation = 0.0f,
-                .target = {0, 0}
-            },
+                .target = {0, 0}},
             .zoom_target = PIXELS_PER_METER * 4.0f,
         },
         .recording = false,
@@ -489,82 +536,107 @@ int main() {
     reset(&sim);
 
     // Load configuration AFTER reset
-    SimConfig* config = load_config("pufferlib/ocean/airsim/example.yaml");
-    if (config) {
+    SimConfig *config = load_config("pufferlib/ocean/airsim/example.yaml");
+    if (config)
+    {
         printf("Loaded configuration from example.yaml\n");
         apply_config(&sim, config);
         free_config(config);
     }
-    
-    while (!WindowShouldClose()) {
+
+    while (!WindowShouldClose())
+    {
         // Input handling
-        if (IsKeyPressed(KEY_F1)) state.show_help = !state.show_help;
-        if (IsKeyPressed(KEY_SPACE)) state.paused = !state.paused;
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) { // Mouse click to step
+        if (IsKeyPressed(KEY_F1))
+            state.show_help = !state.show_help;
+        if (IsKeyPressed(KEY_SPACE))
+            state.paused = !state.paused;
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        { // Mouse click to step
             step(&sim);
         }
-        if (IsKeyPressed(KEY_R)) {
+        if (IsKeyPressed(KEY_R))
+        {
             reset(&sim);
-            reset_ui_state(&state);
+            reset_ui_state(&state, &sim);
         }
-        if (IsKeyPressed(KEY_TAB)) state.show_debug = !state.show_debug;
-        if (IsKeyPressed(KEY_P)) state.show_threat_paths = !state.show_threat_paths;  // Add 'P' key toggle
-        
+        if (IsKeyPressed(KEY_TAB))
+            state.show_debug = !state.show_debug;
+        if (IsKeyPressed(KEY_P))
+            state.show_threat_paths = !state.show_threat_paths; // Add 'P' key toggle
+
         // Handle laser toggles (keys 1-5)
-        for (int i = 0; i < MAX_LASERS; i++) {
-            if (IsKeyPressed(KEY_ONE + i)) {
+        for (int i = 0; i < MAX_LASERS; i++)
+        {
+            if (IsKeyPressed(KEY_ONE + i))
+            {
                 state.show_laser[i] = !state.show_laser[i];
             }
         }
-        
+
         // Handle laser selection with up/down keys
-        if (IsKeyPressed(KEY_UP)) {
+        if (IsKeyPressed(KEY_UP))
+        {
             state.active_laser = (state.active_laser - 1 + MAX_LASERS) % MAX_LASERS;
             // Only select active lasers
-            while (sim.lasers[state.active_laser].type == 0) {
+            while (sim.lasers[state.active_laser].type == 0)
+            {
                 state.active_laser = (state.active_laser - 1 + MAX_LASERS) % MAX_LASERS;
             }
         }
-        if (IsKeyPressed(KEY_DOWN)) {
+        if (IsKeyPressed(KEY_DOWN))
+        {
             state.active_laser = (state.active_laser + 1) % MAX_LASERS;
             // Only select active lasers
-            while (sim.lasers[state.active_laser].type == 0) {
+            while (sim.lasers[state.active_laser].type == 0)
+            {
                 state.active_laser = (state.active_laser + 1) % MAX_LASERS;
             }
         }
-        
+
         // Handle threat selection with arrow keys - only cycle through active threats
-        if (IsKeyPressed(KEY_RIGHT)) {
+        if (IsKeyPressed(KEY_RIGHT))
+        {
             state.selected_threat = find_next_active_threat(&sim, state.selected_threat, true);
         }
-        if (IsKeyPressed(KEY_LEFT)) {
+        if (IsKeyPressed(KEY_LEFT))
+        {
             state.selected_threat = find_next_active_threat(&sim, state.selected_threat, false);
         }
-        
+
         // Handle laser engagement (ENTER to engage, BACKSPACE to disengage)
-        if (IsKeyPressed(KEY_ENTER)) {
-            if (sim.threats[state.selected_threat].type > 0) {
-                printf("[Tick %d] Keyboard command to Laser %d engaging threat %d\n", 
+        if (IsKeyPressed(KEY_ENTER))
+        {
+            if (sim.threats[state.selected_threat].type > 0)
+            {
+                printf("[Tick %d] Keyboard command to Laser %d engaging threat %d\n",
                        sim.ticks, state.active_laser, state.selected_threat);
                 sim.lasers[state.active_laser].engaging_threat = state.selected_threat;
             }
         }
-        if (IsKeyPressed(KEY_BACKSPACE)) {
+        if (IsKeyPressed(KEY_BACKSPACE))
+        {
             sim.lasers[state.active_laser].engaging_threat = -1;
         }
-        
+
         // Replace video recording logic
-        if (IsKeyPressed(KEY_F2)) {
-            if (!state.recording) {
+        if (IsKeyPressed(KEY_F2))
+        {
+            if (!state.recording)
+            {
                 state.recording = true;
                 state.ffmpeg = ffmpeg_start_rendering(WINDOW_WIDTH, WINDOW_HEIGHT, 30, NULL); // 30fps for video playback
-                if (!state.ffmpeg) {
+                if (!state.ffmpeg)
+                {
                     TraceLog(LOG_ERROR, "Failed to start recording");
                     state.recording = false;
                 }
-            } else {
+            }
+            else
+            {
                 state.recording = false;
-                if (state.ffmpeg) {
+                if (state.ffmpeg)
+                {
                     ffmpeg_end_rendering(state.ffmpeg, false);
                     state.ffmpeg = NULL;
                 }
@@ -572,12 +644,14 @@ int main() {
         }
 
         // Update simulation if not paused and not terminal
-        if (!state.paused && !sim.terminal) {
+        if (!state.paused && !sim.terminal)
+        {
             step(&sim);
         }
-        
+
         // Pause simulation when terminal state is reached
-        if (sim.terminal) {
+        if (sim.terminal)
+        {
             state.paused = true;
         }
 
@@ -586,21 +660,23 @@ int main() {
 
         // Render
         BeginDrawing();
-        ClearBackground(WHITE);  // Changed from BLACK
-        
+        ClearBackground(WHITE); // Changed from BLACK
+
         BeginMode2D(state.camera.cam);
         draw_grid(&state.camera.cam, GRID_SIZE);
-        draw_aircraft(&state.camera.cam, &sim, &state);  // Pass state to draw_aircraft
-        draw_threats(&state.camera.cam, &sim, state.show_threat_paths, state.selected_threat);  // Pass show_paths parameter
+        draw_aircraft(&state.camera.cam, &sim, &state);                                        // Pass state to draw_aircraft
+        draw_threats(&state.camera.cam, &sim, state.show_threat_paths, state.selected_threat); // Pass show_paths parameter
         EndMode2D();
-        
+
         draw_hud(&sim, &state);
         EndDrawing();
-        
+
         // Replace frame capture code with safer version
-        if (state.recording && state.ffmpeg) {
+        if (state.recording && state.ffmpeg)
+        {
             Image screen = LoadImageFromScreen();
-            if (screen.data) {
+            if (screen.data)
+            {
                 ffmpeg_send_frame_flipped(state.ffmpeg, screen.data, screen.width, screen.height);
                 UnloadImage(screen);
             }
@@ -608,7 +684,8 @@ int main() {
     }
 
     // Ensure recording is stopped
-    if (state.recording && state.ffmpeg) {
+    if (state.recording && state.ffmpeg)
+    {
         ffmpeg_end_rendering(state.ffmpeg, false);
     }
 
