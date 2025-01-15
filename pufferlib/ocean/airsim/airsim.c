@@ -494,6 +494,16 @@ void reset_ui_state(GameState *state, AirSim *sim)
     state->camera.cam.zoom = PIXELS_PER_METER * 4.0f;
 }
 
+void load_sim_config(AirSim *sim, const char *config_path)
+{
+    SimConfig *config = load_config(config_path);
+    if (config)
+    {
+        printf("Loaded configuration from %s\n", config_path);
+        apply_config(sim, config);
+        free_config(config);
+    }
+}
 int main()
 {
     // Initialize simulation
@@ -534,15 +544,8 @@ int main()
     };
 
     reset(&sim);
-
-    // Load configuration AFTER reset
-    SimConfig *config = load_config("pufferlib/ocean/airsim/example.yaml");
-    if (config)
-    {
-        printf("Loaded configuration from example.yaml\n");
-        apply_config(&sim, config);
-        free_config(config);
-    }
+    // TODO: load yaml from command line
+    load_sim_config(&sim, "pufferlib/ocean/airsim/example.yaml");
 
     while (!WindowShouldClose())
     {
@@ -558,6 +561,7 @@ int main()
         if (IsKeyPressed(KEY_R))
         {
             reset(&sim);
+            load_sim_config(&sim, "pufferlib/ocean/airsim/example.yaml");
             reset_ui_state(&state, &sim);
         }
         if (IsKeyPressed(KEY_TAB))
