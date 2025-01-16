@@ -5,8 +5,8 @@
 #include <stdio.h>
 
 // Window/display settings
-#define WINDOW_WIDTH 1920
-#define WINDOW_HEIGHT 1080
+#define WINDOW_WIDTH 1280
+#define WINDOW_HEIGHT 720
 #define GRID_SIZE 100.0f      // Size of each grid square in meters
 #define PIXELS_PER_METER 0.2f // Scale for rendering
 #define RANGE_TEXT_SIZE 30
