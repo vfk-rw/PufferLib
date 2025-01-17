@@ -44,6 +44,12 @@ typedef struct Threat
     float acceleration;
     float max_velocity;
     float lifetime;
+    float guidance_recovery_rate; // How fast guidance recovers when not targeted
+    float last_guidance_hit;      // Time of last successful laser hit
+    float seeker_az_error;        // Azimuth error in degrees
+    float seeker_el_error;        // Elevation error in degrees
+    float error_recovery_rate;    // How fast seeker errors decay
+    float last_laser_hit;         // Time of last laser hit
 } Threat;
 
 typedef struct Laser
@@ -494,7 +500,7 @@ void predict_pronav_point(
                is_engaged ? "ENGAGED" : "NOT ENGAGED",
                being_targeted ? "TARGETED" : "NOT TARGETED");
         printf("Range: %.1fm, Closing Vel: %.1fm/s\n", r, vc);
-        printf("LOS Rate: %.2f deg/s\n", omega_mag * RAD2DEG_SAFE);
+        printf("LOS Rate: %.2f deg/s Guidance gain: %.2f\n", omega_mag * RAD2DEG_SAFE, guidance_gain);
         printf("Velocity: [%.1f, %.1f, %.1f] m/s (mag: %.1f)\n",
                *threat_vx, *threat_vy, *threat_vz, v_mag);
         printf("Accel: [%.1f, %.1f, %.1f] m/s² (mag: %.1f)\n",
@@ -679,30 +685,53 @@ void apply_countermeasures(AirSim *sim)
             int threat_idx = sim->lasers[i].engaging_threat;
             if (sim->threats[threat_idx].type > 0)
             {
+                // Check if threat is in FOV and range
                 float target_az, target_el;
                 compute_angles_to_target(
                     sim->aircraft_x, sim->aircraft_y, sim->aircraft_z,
                     sim->threats[threat_idx].x, sim->threats[threat_idx].y, sim->threats[threat_idx].z,
                     &target_az, &target_el);
 
-                // Check if threat is in FOV
                 float az_diff = fabsf(fmodf(target_az - sim->lasers[i].az + 540.0f, 360.0f) - 180.0f);
                 float el_diff = fabsf(target_el - sim->lasers[i].el);
+                float dist = compute_distance(
+                    sim->aircraft_x, sim->aircraft_y, sim->aircraft_z,
+                    sim->threats[threat_idx].x, sim->threats[threat_idx].y, sim->threats[threat_idx].z);
 
-                if (az_diff <= sim->lasers[i].fov && el_diff <= sim->lasers[i].fov)
+                if (az_diff <= sim->lasers[i].fov && el_diff <= sim->lasers[i].fov &&
+                    dist <= sim->lasers[i].maximum_range)
                 {
-                    float dist = compute_distance(
-                        sim->aircraft_x, sim->aircraft_y, sim->aircraft_z,
-                        sim->threats[threat_idx].x, sim->threats[threat_idx].y, sim->threats[threat_idx].z);
 
-                    if (dist <= sim->lasers[i].maximum_range)
-                    {
-                        // Reduce guidance gain
-                        sim->threats[threat_idx].guidance_gain = fmaxf(0.0f,
-                                                                       sim->threats[threat_idx].guidance_gain -
-                                                                           sim->lasers[i].guidance_reduction * sim->dt);
-                    }
+                    // Update last hit time
+                    sim->threats[threat_idx].last_laser_hit = sim->time;
+
+                    // Calculate time under laser
+                    float laser_dwell = sim->time - sim->threats[threat_idx].last_laser_hit;
+
+                    // Induce growing angular errors
+                    float error_magnitude = sim->lasers[i].guidance_reduction * (1.0f + laser_dwell) * 10.0f;
+
+                    // Random walk the error angles with proper float casting
+                    sim->threats[threat_idx].seeker_az_error +=
+                        (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * error_magnitude * sim->dt;
+                    sim->threats[threat_idx].seeker_el_error +=
+                        (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * error_magnitude * sim->dt;
                 }
+            }
+        }
+    }
+
+    // Allow errors to decay when not being targeted
+    for (int i = 0; i < MAX_THREATS; i++)
+    {
+        if (sim->threats[i].type > 0)
+        {
+            float time_since_hit = sim->time - sim->threats[i].last_laser_hit;
+            if (time_since_hit > 0.5f)
+            { // 0.5s recovery delay
+                float recovery = sim->threats[i].error_recovery_rate * sim->dt;
+                sim->threats[i].seeker_az_error *= expf(-recovery);
+                sim->threats[i].seeker_el_error *= expf(-recovery);
             }
         }
     }
@@ -912,6 +941,8 @@ void reset(AirSim *sim)
         sim->threats[i].guidance_gain = 1.0f;
         sim->threats[i].track_rate = 100.0f;
         sim->threats[i].fov = 30.0f;
+        sim->threats[i].guidance_recovery_rate = 0.1f; // 10% recovery per second
+        sim->threats[i].last_guidance_hit = -1000.0f;  // Start with no recent hits
 
         // Initialize pointing angles toward aircraft
         compute_angles_to_target(
@@ -931,6 +962,11 @@ void reset(AirSim *sim)
         sim->threats[i].vx = (dx / r) * init_speed;
         sim->threats[i].vy = (dy / r) * init_speed;
         sim->threats[i].vz = (dz / r) * init_speed;
+
+        sim->threats[i].seeker_az_error = 0.0f;
+        sim->threats[i].seeker_el_error = 0.0f;
+        sim->threats[i].error_recovery_rate = 0.5f; // 50% error recovery per second
+        sim->threats[i].last_laser_hit = -1000.0f;  // Start with no recent hits
     }
 
     // Reset lasers
