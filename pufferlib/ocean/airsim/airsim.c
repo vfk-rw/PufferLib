@@ -238,28 +238,47 @@ void draw_threats(Camera2D *cam, AirSim *sim, bool show_paths, int selected_thre
                 DrawCircleLines(pos.x, pos.y, radius, RED);
             }
 
-            // Draw dotted line path to aircraft if enabled
+            // Draw predicted pro-nav path if enabled
             if (show_paths)
             {
-                Vector2 aircraft_pos = world_to_screen(cam, sim->aircraft_x, sim->aircraft_y);
-                float dx = aircraft_pos.x - pos.x;
-                float dy = aircraft_pos.y - pos.y;
-                float len = sqrtf(dx * dx + dy * dy);
-                if (len > 0)
+                const int NUM_POINTS = 60; // Show 1 second of prediction at 60Hz
+                const float PRED_DT = 1.0f / 60.0f;
+
+                // Initialize prediction variables
+                float pred_x = sim->threats[i].x;
+                float pred_y = sim->threats[i].y;
+                float pred_z = sim->threats[i].z;
+                float pred_vx = sim->threats[i].vx;
+                float pred_vy = sim->threats[i].vy;
+                float pred_vz = sim->threats[i].vz;
+
+                Vector2 last_pos = world_to_screen(cam, pred_x, pred_y);
+
+                // Draw prediction path points
+                for (int j = 0; j < NUM_POINTS; j++)
                 {
-                    dx /= len;
-                    dy /= len;
-                    for (float d = 0; d < len; d += 20.0f)
-                    {
-                        if ((int)(d / 20.0f) % 2 == 0)
-                        { // Draw every other segment
-                            DrawLineEx(
-                                (Vector2){pos.x + dx * d, pos.y + dy * d},
-                                (Vector2){pos.x + dx * (d + 10.0f), pos.y + dy * (d + 10.0f)},
-                                2,
-                                RED);
-                        }
+                    predict_pronav_point(
+                        PRED_DT,
+                        sim->aircraft_x + sim->aircraft_vx * j * PRED_DT,
+                        sim->aircraft_y + sim->aircraft_vy * j * PRED_DT,
+                        sim->aircraft_z + sim->aircraft_vz * j * PRED_DT,
+                        sim->aircraft_vx, sim->aircraft_vy, sim->aircraft_vz,
+                        &pred_x, &pred_y, &pred_z,
+                        &pred_vx, &pred_vy, &pred_vz,
+                        sim->threats[i].guidance_gain,
+                        sim->threats[i].acceleration,
+                        sim->threats[i].max_velocity);
+
+                    Vector2 curr_pos = world_to_screen(cam, pred_x, pred_y);
+                    // Draw dashed line segments with fading opacity
+                    float alpha = 1.0f - (float)j / NUM_POINTS;
+                    if (j % 2 == 0)
+                    { // Only draw every other segment for dashed effect
+                        DrawLineEx(last_pos, curr_pos, 2,
+                                   (Color){255, 0, 0, (unsigned char)(255 * alpha)});
                     }
+
+                    last_pos = curr_pos;
                 }
             }
 

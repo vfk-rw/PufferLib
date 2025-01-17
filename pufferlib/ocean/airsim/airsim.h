@@ -417,6 +417,79 @@ void compute_angles_to_target(float x1, float y1, float z1,
     *el = atan2f(dz, ground_distance) * RAD2DEG_SAFE;
 }
 
+// Add this helper function for predicted path calculation
+void predict_pronav_point(
+    float dt,
+    float aircraft_x, float aircraft_y, float aircraft_z,
+    float aircraft_vx, float aircraft_vy, float aircraft_vz,
+    float *threat_x, float *threat_y, float *threat_z,
+    float *threat_vx, float *threat_vy, float *threat_vz,
+    float guidance_gain, float max_accel, float max_velocity)
+{
+    // Calculate relative position
+    float dx = aircraft_x - *threat_x;
+    float dy = aircraft_y - *threat_y;
+    float dz = aircraft_z - *threat_z;
+
+    float r = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (r < 0.1f)
+        return;
+
+    // Calculate relative velocity
+    float dvx = aircraft_vx - *threat_vx;
+    float dvy = aircraft_vy - *threat_vy;
+    float dvz = aircraft_vz - *threat_vz;
+
+    // Calculate closing velocity
+    float vc = -((dx * dvx + dy * dvy + dz * dvz) / r);
+
+    // Calculate LOS rates
+    float rx = dx / r;
+    float ry = dy / r;
+    float rz = dz / r;
+
+    // Get LOS rate vector
+    float omega_x = (ry * dvz - rz * dvy) / r;
+    float omega_y = (rz * dvx - rx * dvz) / r;
+    float omega_z = (rx * dvy - ry * dvx) / r;
+
+    // Calculate acceleration commands
+    float N = 3.0f;
+    float ax = N * vc * omega_x * guidance_gain;
+    float ay = N * vc * omega_y * guidance_gain;
+    float az = N * vc * omega_z * guidance_gain;
+
+    // Limit acceleration
+    float a_mag = sqrtf(ax * ax + ay * ay + az * az);
+    if (a_mag > max_accel)
+    {
+        float scale = max_accel / a_mag;
+        ax *= scale;
+        ay *= scale;
+        az *= scale;
+    }
+
+    // Update velocities
+    *threat_vx += ax * dt;
+    *threat_vy += ay * dt;
+    *threat_vz += az * dt;
+
+    // Limit velocity
+    float v_mag = sqrtf((*threat_vx) * (*threat_vx) + (*threat_vy) * (*threat_vy) + (*threat_vz) * (*threat_vz));
+    if (v_mag > max_velocity)
+    {
+        float scale = max_velocity / v_mag;
+        *threat_vx *= scale;
+        *threat_vy *= scale;
+        *threat_vz *= scale;
+    }
+
+    // Update positions
+    *threat_x += *threat_vx * dt;
+    *threat_y += *threat_vy * dt;
+    *threat_z += *threat_vz * dt;
+}
+
 // Core simulation functions
 void step_aircraft(AirSim *sim)
 {
@@ -459,37 +532,47 @@ void step_threats(AirSim *sim)
     {
         if (sim->threats[i].type > 0 && sim->threats[i].engaged)
         {
-            // Calculate relative position and velocity
+            // Calculate relative position
             float dx = sim->aircraft_x - sim->threats[i].x;
             float dy = sim->aircraft_y - sim->threats[i].y;
             float dz = sim->aircraft_z - sim->threats[i].z;
 
             float r = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (r < 0.1f)
+                continue; // Avoid division by zero
 
-            // Calculate relative velocity - NOW CORRECTED SIGN
+            // Calculate relative velocity
             float dvx = sim->aircraft_vx - sim->threats[i].vx;
             float dvy = sim->aircraft_vy - sim->threats[i].vy;
             float dvz = sim->aircraft_vz - sim->threats[i].vz;
 
-            // Closing velocity is positive when closing distance
-            float vr = -((dx * dvx + dy * dvy + dz * dvz) / r);
+            // Calculate closing velocity
+            float vc = -((dx * dvx + dy * dvy + dz * dvz) / r);
 
-            // Use higher navigation gain for more aggressive intercept
-            float N = 5.0f;
+            // Calculate line of sight rates
+            float rx = dx / r;
+            float ry = dy / r;
+            float rz = dz / r;
 
-            // Fix acceleration command signs
-            float ax = N * vr * (dy * dvz - dz * dvy) / (r * r);
-            float ay = N * vr * (dz * dvx - dx * dvz) / (r * r);
-            float az = N * vr * (dx * dvy - dy * dvx) / (r * r);
+            // Cross product of LOS vector and relative velocity to get omega (LOS rate)
+            float omega_x = (ry * dvz - rz * dvy) / r;
+            float omega_y = (rz * dvx - rx * dvz) / r;
+            float omega_z = (rx * dvy - ry * dvx) / r;
 
-            // Apply guidance gain before limiting
+            // Proportional navigation with N = 3
+            float N = 3.0f;
+            float ax = N * vc * omega_x;
+            float ay = N * vc * omega_y;
+            float az = N * vc * omega_z;
+
+            // Apply guidance gain
             ax *= sim->threats[i].guidance_gain;
             ay *= sim->threats[i].guidance_gain;
             az *= sim->threats[i].guidance_gain;
 
-            // Always apply full acceleration magnitude
+            // Limit acceleration magnitude
             float a_mag = sqrtf(ax * ax + ay * ay + az * az);
-            if (a_mag > 0.0f)
+            if (a_mag > sim->threats[i].acceleration)
             {
                 float scale = sim->threats[i].acceleration / a_mag;
                 ax *= scale;
@@ -530,7 +613,7 @@ void step_threats(AirSim *sim)
             // Check for ground collision
             if (sim->threats[i].z <= 0.0f)
             {
-                sim->threats[i].type = 0; // Deactivate threat
+                sim->threats[i].type = 0;
                 sim->threats[i].lifetime = 0.0f;
                 continue;
             }
