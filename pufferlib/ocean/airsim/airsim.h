@@ -433,7 +433,7 @@ void predict_pronav_point(
     bool is_engaged,
     bool being_targeted)
 {
-    // Calculate relative position
+    // Calculate relative position (from threat to target)
     float dx = aircraft_x - *threat_x;
     float dy = aircraft_y - *threat_y;
     float dz = aircraft_z - *threat_z;
@@ -442,7 +442,7 @@ void predict_pronav_point(
     if (r < 0.1f)
         return;
 
-    // Unit LOS vector (from threat to target)
+    // Unit LOS vector from threat to target
     float rx = dx / r;
     float ry = dy / r;
     float rz = dz / r;
@@ -452,38 +452,29 @@ void predict_pronav_point(
     float dvy = aircraft_vy - *threat_vy;
     float dvz = aircraft_vz - *threat_vz;
 
-    // Closing velocity (negative means closing)
-    float vc = -(dvx * rx + dvy * ry + dvz * rz);
+    // Closing velocity (positive means closing)
+    float vc = (dvx * rx + dvy * ry + dvz * rz);
 
-    // Project relative velocity onto perpendicular plane to LOS
-    // This gives the transverse component that causes LOS rotation
-    float vp_x = dvx - vc * rx;
-    float vp_y = dvy - vc * ry;
-    float vp_z = dvz - vc * rz;
+    // Calculate omega vector directly using cross product
+    float omega_x = (dy * dvz - dz * dvy) / (r * r);
+    float omega_y = (dz * dvx - dx * dvz) / (r * r);
+    float omega_z = (dx * dvy - dy * dvx) / (r * r);
 
-    // LOS rate is the transverse velocity divided by range
-    float omega_x = vp_x / r;
-    float omega_y = vp_y / r;
-    float omega_z = vp_z / r;
     float omega_mag = sqrtf(omega_x * omega_x + omega_y * omega_y + omega_z * omega_z);
 
     // Pure PN law: n = N * Vc * omega
     float N = 3.0f;
+    float scale = N * vc * guidance_gain;
 
-    // Compute PN acceleration - cross product of omega with velocity
+    // Compute acceleration perpendicular to velocity
     float v_mag = sqrtf((*threat_vx) * (*threat_vx) + (*threat_vy) * (*threat_vy) + (*threat_vz) * (*threat_vz));
     if (v_mag < 0.1f)
         v_mag = 0.1f;
 
-    // Unit velocity vector
-    float vx = *threat_vx / v_mag;
-    float vy = *threat_vy / v_mag;
-    float vz = *threat_vz / v_mag;
-
-    // Cross product of omega with velocity direction gives lateral acceleration direction
-    float ax = N * vc * (vy * omega_z - vz * omega_y) * guidance_gain;
-    float ay = N * vc * (vz * omega_x - vx * omega_z) * guidance_gain;
-    float az = N * vc * (vx * omega_y - vy * omega_x) * guidance_gain;
+    // Cross omega with velocity direction to get lateral acceleration
+    float ax = scale * ((*threat_vy * omega_z - *threat_vz * omega_y) / v_mag);
+    float ay = scale * ((*threat_vz * omega_x - *threat_vx * omega_z) / v_mag);
+    float az = scale * ((*threat_vx * omega_y - *threat_vy * omega_x) / v_mag);
 
     // Limit total acceleration
     float a_mag = sqrtf(ax * ax + ay * ay + az * az);
@@ -935,8 +926,8 @@ void reset(AirSim *sim)
         float dz = sim->aircraft_z - sim->threats[i].z;
         float r = sqrtf(dx * dx + dy * dy + dz * dz);
 
-        // Initialize with 50% of max velocity toward target
-        float init_speed = sim->threat_max_velocity * 0.5f;
+        // Initialize with 75% of max velocity toward target
+        float init_speed = sim->threat_max_velocity * 0.75f;
         sim->threats[i].vx = (dx / r) * init_speed;
         sim->threats[i].vy = (dy / r) * init_speed;
         sim->threats[i].vz = (dz / r) * init_speed;
