@@ -15,6 +15,7 @@
 #define PI 3.14159265358979323846f
 // #define DEBUG_TERMINAL
 #define DEBUG_PRINT
+#define DEBUG_PRONAV // Add this line
 #define LOG_BUFFER_SIZE 1024
 #define MAX_SEEKER_ERROR_SCALE 50.0f // Make error much larger for visibility
 #define RAD2DEG_SAFE 57.2957795131f  // 180/pi
@@ -424,7 +425,13 @@ void predict_pronav_point(
     float aircraft_vx, float aircraft_vy, float aircraft_vz,
     float *threat_x, float *threat_y, float *threat_z,
     float *threat_vx, float *threat_vy, float *threat_vz,
-    float guidance_gain, float max_accel, float max_velocity)
+    float guidance_gain, float max_accel, float max_velocity,
+    bool debug,
+    // Add new parameters
+    int step,
+    int threat_id,
+    bool is_engaged,
+    bool being_targeted)
 {
     // Calculate relative position
     float dx = aircraft_x - *threat_x;
@@ -435,31 +442,50 @@ void predict_pronav_point(
     if (r < 0.1f)
         return;
 
-    // Calculate relative velocity
-    float dvx = aircraft_vx - *threat_vx;
-    float dvy = aircraft_vy - *threat_vy;
-    float dvz = aircraft_vz - *threat_vz;
-
-    // Calculate closing velocity
-    float vc = -((dx * dvx + dy * dvy + dz * dvz) / r);
-
-    // Calculate LOS rates
+    // Unit LOS vector (from threat to target)
     float rx = dx / r;
     float ry = dy / r;
     float rz = dz / r;
 
-    // Get LOS rate vector
-    float omega_x = (ry * dvz - rz * dvy) / r;
-    float omega_y = (rz * dvx - rx * dvz) / r;
-    float omega_z = (rx * dvy - ry * dvx) / r;
+    // Relative velocity
+    float dvx = aircraft_vx - *threat_vx;
+    float dvy = aircraft_vy - *threat_vy;
+    float dvz = aircraft_vz - *threat_vz;
 
-    // Calculate acceleration commands
+    // Closing velocity (negative means closing)
+    float vc = -(dvx * rx + dvy * ry + dvz * rz);
+
+    // Project relative velocity onto perpendicular plane to LOS
+    // This gives the transverse component that causes LOS rotation
+    float vp_x = dvx - vc * rx;
+    float vp_y = dvy - vc * ry;
+    float vp_z = dvz - vc * rz;
+
+    // LOS rate is the transverse velocity divided by range
+    float omega_x = vp_x / r;
+    float omega_y = vp_y / r;
+    float omega_z = vp_z / r;
+    float omega_mag = sqrtf(omega_x * omega_x + omega_y * omega_y + omega_z * omega_z);
+
+    // Pure PN law: n = N * Vc * omega
     float N = 3.0f;
-    float ax = N * vc * omega_x * guidance_gain;
-    float ay = N * vc * omega_y * guidance_gain;
-    float az = N * vc * omega_z * guidance_gain;
 
-    // Limit acceleration
+    // Compute PN acceleration - cross product of omega with velocity
+    float v_mag = sqrtf((*threat_vx) * (*threat_vx) + (*threat_vy) * (*threat_vy) + (*threat_vz) * (*threat_vz));
+    if (v_mag < 0.1f)
+        v_mag = 0.1f;
+
+    // Unit velocity vector
+    float vx = *threat_vx / v_mag;
+    float vy = *threat_vy / v_mag;
+    float vz = *threat_vz / v_mag;
+
+    // Cross product of omega with velocity direction gives lateral acceleration direction
+    float ax = N * vc * (vy * omega_z - vz * omega_y) * guidance_gain;
+    float ay = N * vc * (vz * omega_x - vx * omega_z) * guidance_gain;
+    float az = N * vc * (vx * omega_y - vy * omega_x) * guidance_gain;
+
+    // Limit total acceleration
     float a_mag = sqrtf(ax * ax + ay * ay + az * az);
     if (a_mag > max_accel)
     {
@@ -469,13 +495,29 @@ void predict_pronav_point(
         az *= scale;
     }
 
+#ifdef DEBUG_PRONAV
+    if (debug)
+    {
+        printf("\nPRONAV [Step %d] Threat %d (%s, %s):\n",
+               step, threat_id,
+               is_engaged ? "ENGAGED" : "NOT ENGAGED",
+               being_targeted ? "TARGETED" : "NOT TARGETED");
+        printf("Range: %.1fm, Closing Vel: %.1fm/s\n", r, vc);
+        printf("LOS Rate: %.2f deg/s\n", omega_mag * RAD2DEG_SAFE);
+        printf("Velocity: [%.1f, %.1f, %.1f] m/s (mag: %.1f)\n",
+               *threat_vx, *threat_vy, *threat_vz, v_mag);
+        printf("Accel: [%.1f, %.1f, %.1f] m/s² (mag: %.1f)\n",
+               ax, ay, az, a_mag);
+    }
+#endif
+
     // Update velocities
     *threat_vx += ax * dt;
     *threat_vy += ay * dt;
     *threat_vz += az * dt;
 
-    // Limit velocity
-    float v_mag = sqrtf((*threat_vx) * (*threat_vx) + (*threat_vy) * (*threat_vy) + (*threat_vz) * (*threat_vz));
+    // Limit velocity magnitude
+    v_mag = sqrtf((*threat_vx) * (*threat_vx) + (*threat_vy) * (*threat_vy) + (*threat_vz) * (*threat_vz));
     if (v_mag > max_velocity)
     {
         float scale = max_velocity / v_mag;
@@ -532,77 +574,33 @@ void step_threats(AirSim *sim)
     {
         if (sim->threats[i].type > 0 && sim->threats[i].engaged)
         {
-            // Calculate relative position
-            float dx = sim->aircraft_x - sim->threats[i].x;
-            float dy = sim->aircraft_y - sim->threats[i].y;
-            float dz = sim->aircraft_z - sim->threats[i].z;
-
-            float r = sqrtf(dx * dx + dy * dy + dz * dz);
-            if (r < 0.1f)
-                continue; // Avoid division by zero
-
-            // Calculate relative velocity
-            float dvx = sim->aircraft_vx - sim->threats[i].vx;
-            float dvy = sim->aircraft_vy - sim->threats[i].vy;
-            float dvz = sim->aircraft_vz - sim->threats[i].vz;
-
-            // Calculate closing velocity
-            float vc = -((dx * dvx + dy * dvy + dz * dvz) / r);
-
-            // Calculate line of sight rates
-            float rx = dx / r;
-            float ry = dy / r;
-            float rz = dz / r;
-
-            // Cross product of LOS vector and relative velocity to get omega (LOS rate)
-            float omega_x = (ry * dvz - rz * dvy) / r;
-            float omega_y = (rz * dvx - rx * dvz) / r;
-            float omega_z = (rx * dvy - ry * dvx) / r;
-
-            // Proportional navigation with N = 3
-            float N = 3.0f;
-            float ax = N * vc * omega_x;
-            float ay = N * vc * omega_y;
-            float az = N * vc * omega_z;
-
-            // Apply guidance gain
-            ax *= sim->threats[i].guidance_gain;
-            ay *= sim->threats[i].guidance_gain;
-            az *= sim->threats[i].guidance_gain;
-
-            // Limit acceleration magnitude
-            float a_mag = sqrtf(ax * ax + ay * ay + az * az);
-            if (a_mag > sim->threats[i].acceleration)
+            // Check if any laser is targeting this threat
+            bool being_targeted = false;
+            for (int j = 0; j < MAX_LASERS; j++)
             {
-                float scale = sim->threats[i].acceleration / a_mag;
-                ax *= scale;
-                ay *= scale;
-                az *= scale;
+                if (sim->lasers[j].engaging_threat == i)
+                {
+                    being_targeted = true;
+                    break;
+                }
             }
 
-            // Update velocities
-            sim->threats[i].vx += ax * sim->dt;
-            sim->threats[i].vy += ay * sim->dt;
-            sim->threats[i].vz += az * sim->dt;
-
-            // Limit velocity magnitude
-            float v_mag = sqrtf(
-                sim->threats[i].vx * sim->threats[i].vx +
-                sim->threats[i].vy * sim->threats[i].vy +
-                sim->threats[i].vz * sim->threats[i].vz);
-
-            if (v_mag > sim->threats[i].max_velocity)
-            {
-                float scale = sim->threats[i].max_velocity / v_mag;
-                sim->threats[i].vx *= scale;
-                sim->threats[i].vy *= scale;
-                sim->threats[i].vz *= scale;
-            }
-
-            // Update position
-            sim->threats[i].x += sim->threats[i].vx * sim->dt;
-            sim->threats[i].y += sim->threats[i].vy * sim->dt;
-            sim->threats[i].z += sim->threats[i].vz * sim->dt;
+            // Use predict_pronav_point for actual simulation step
+            predict_pronav_point(
+                sim->dt,
+                sim->aircraft_x, sim->aircraft_y, sim->aircraft_z,
+                sim->aircraft_vx, sim->aircraft_vy, sim->aircraft_vz,
+                &sim->threats[i].x, &sim->threats[i].y, &sim->threats[i].z,
+                &sim->threats[i].vx, &sim->threats[i].vy, &sim->threats[i].vz,
+                sim->threats[i].guidance_gain,
+                sim->threats[i].acceleration,
+                sim->threats[i].max_velocity,
+                true,                    // debug
+                sim->ticks,              // step
+                i,                       // threat_id
+                sim->threats[i].engaged, // is_engaged
+                being_targeted           // being_targeted
+            );
 
             // Update angles for visualization
             compute_angles_to_target(

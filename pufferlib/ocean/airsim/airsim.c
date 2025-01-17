@@ -267,7 +267,13 @@ void draw_threats(Camera2D *cam, AirSim *sim, bool show_paths, int selected_thre
                         &pred_vx, &pred_vy, &pred_vz,
                         sim->threats[i].guidance_gain,
                         sim->threats[i].acceleration,
-                        sim->threats[i].max_velocity);
+                        sim->threats[i].max_velocity,
+                        false,                   // debug
+                        sim->ticks + j,          // step
+                        i,                       // threat_id
+                        sim->threats[i].engaged, // is_engaged
+                        false                    // being_targeted (false for prediction)
+                    );
 
                     Vector2 curr_pos = world_to_screen(cam, pred_x, pred_y);
                     // Draw dashed line segments with fading opacity
