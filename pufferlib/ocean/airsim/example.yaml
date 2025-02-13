@@ -67,8 +67,8 @@ entities:
 
   threats:
     - type: 1  # Basic missile
-    - type: 2  # Advanced missile
-    - type: 2  # Advanced missile
+    - type: 0  
+    - type: 0
     - type: 0  # Inactive
     - type: 0  # Inactive
     - type: 0  # Inactive

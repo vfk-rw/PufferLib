@@ -1,0 +1,42 @@
+simulation:
+  dt: 0.001
+  max_time: 60.0
+  max_steps: 60000
+  aircraft:
+    position: [0.0, 0.0, 1000.0]
+    velocity: [100.0, 0.0, 0.0]
+
+entities:
+  seekers:
+    - type: 1
+    - type: 1
+    - type: 0
+    - type: 0
+    - type: 0
+    - type: 0
+    - type: 0
+    - type: 0
+    - type: 0
+    - type: 0
+  lasers:
+    - type: 1
+    - type: 0
+    - type: 0
+    - type: 0
+    - type: 0
+
+seeker_types:
+  1:
+    fov: 30.0
+    track_rate: 100.0
+    acceleration: 400.0
+    max_velocity: 1000.0
+    lifetime: 17.0
+    navigation_constant: 3.0
+
+laser_types:
+  1:
+    track_rate: 60.0
+    fov: 5.0
+    guidance_reduction: 5.0
+    maximum_range: 4000.0
