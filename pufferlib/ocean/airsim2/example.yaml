@@ -10,7 +10,7 @@ entities:
   seekers:
     - type: 1
     - type: 1
-    - type: 2
+    - type: 0
     - type: 0
     - type: 0
     - type: 0
@@ -19,27 +19,27 @@ entities:
     - type: 0
     - type: 0
   lasers:
-    - type: 1
-    - type: 2
+    - type: 0
+    - type: 0
     - type: 0
     - type: 0
     - type: 0
 
 seeker_types:
   1:
-    fov: 30.0
-    track_rate: 20.0
-    acceleration: 400.0
-    max_velocity: 1000.0
+    fov: 10.0
+    track_rate: 10.0
+    acceleration: 600.0    # Increased from 400
+    max_velocity: 800.0    # Reduced from 1000
     lifetime: 17.0
-    navigation_constant: 3.0
+    navigation_constant: 4.0  # Increased from 3
   2:
-    fov: 40.0
-    track_rate: 30.0
-    acceleration: 600.0
-    max_velocity: 2000.0
+    fov: 15.0
+    track_rate: 90.0
+    acceleration: 750.0    # Increased from 500
+    max_velocity: 900.0    # Reduced from 1200
     lifetime: 17.0
-    navigation_constant: 4.0
+    navigation_constant: 5.0  # Increased from 4
 
 laser_types:
   1:

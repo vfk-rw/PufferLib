@@ -478,49 +478,155 @@ void step_seekers(AirSim *sim)
             continue;
         Seeker *s = &sim->seekers[i];
 
-        // Compute line-of-sight (LOS) vector from seeker to aircraft.
-        float dx = sim->aircraft.x - s->x;
-        float dy = sim->aircraft.y - s->y;
-        float dz = sim->aircraft.z - s->z;
-        float distance = sqrtf(dx * dx + dy * dy + dz * dz);
-        if (distance < 1.0f)
-            distance = 1.0f;
+        // Current relative position vector (R)
+        float Rx = sim->aircraft.x - s->x;
+        float Ry = sim->aircraft.y - s->y;
+        float Rz = sim->aircraft.z - s->z;
+        float R = sqrtf(Rx * Rx + Ry * Ry + Rz * Rz);
+        if (R < 1.0f)
+            R = 1.0f;
 
-        // Normalize LOS vector.
-        float los_x = dx / distance;
-        float los_y = dy / distance;
-        float los_z = dz / distance;
+        // Determine if we're in terminal phase (R < 50m)
+        bool terminal_phase = (R < 50.0f);
 
-        // Compute closing velocity (project relative velocity on LOS).
-        float rel_vx = sim->aircraft.vx - s->vx;
-        float rel_vy = sim->aircraft.vy - s->vy;
-        float rel_vz = sim->aircraft.vz - s->vz;
-        float closing_speed = rel_vx * los_x + rel_vy * los_y + rel_vz * los_z;
+        // Unit LOS vector (los)
+        float los_x = Rx / R;
+        float los_y = Ry / R;
+        float los_z = Rz / R;
 
-        // PN guidance: acceleration command is proportional to navigation constant and closing speed.
-        float command = s->navigation_constant * closing_speed;
+        // Relative velocity vector (Vr)
+        float Vr_x = sim->aircraft.vx - s->vx;
+        float Vr_y = sim->aircraft.vy - s->vy;
+        float Vr_z = sim->aircraft.vz - s->vz;
 
-        // Compute desired velocity change vector.
-        float desired_vx = command * los_x;
-        float desired_vy = command * los_y;
-        float desired_vz = command * los_z;
+        // Closing velocity (Vc = -dR/dt = -(R·Vr)/R)
+        float Vc = -(los_x * Vr_x + los_y * Vr_y + los_z * Vr_z);
 
-        // Limit acceleration.
-        float accel_mag = sqrtf(desired_vx * desired_vx + desired_vy * desired_vy + desired_vz * desired_vz);
-        if (accel_mag > s->acceleration)
+        // True time-to-go estimation using closing velocity
+        float tgo = R / Vc;
+        if (tgo < 0.1f)
+            tgo = 0.1f;
+
+        // Calculate velocity component perpendicular to LOS
+        float Vp_x = Vr_x - Vc * los_x;
+        float Vp_y = Vr_y - Vc * los_y;
+        float Vp_z = Vr_z - Vc * los_z;
+
+        // LOS rate vector (ω = R×Vr/R²)
+        float omega_x = (Ry * Vr_z - Rz * Vr_y) / (R * R);
+        float omega_y = (Rz * Vr_x - Rx * Vr_z) / (R * R);
+        float omega_z = (Rx * Vr_y - Ry * Vr_x) / (R * R);
+
+        // For terminal phase, estimate target acceleration from velocity changes
+        float at_x = 0;
+        float at_y = 0;
+        float at_z = 0;
+
+        if (terminal_phase)
         {
-            float scale = s->acceleration / accel_mag;
-            desired_vx *= scale;
-            desired_vy *= scale;
-            desired_vz *= scale;
+            // Simple estimation of target acceleration
+            at_x = sim->aircraft.vx * 0.1f; // Assume 10% of velocity as acceleration
+            at_y = sim->aircraft.vy * 0.1f;
+            at_z = sim->aircraft.vz * 0.1f;
         }
 
-        // Update seeker velocity.
-        s->vx += desired_vx * sim->dt;
-        s->vy += desired_vy * sim->dt;
-        s->vz += desired_vz * sim->dt;
+        if (sim->ticks % 10 == 0)
+        {
+            printf("\nSeeker %d Guidance Debug (t=%.2f):\n", i, sim->time);
+            printf("  Position: (%.1f, %.1f, %.1f)\n", s->x, s->y, s->z);
+            printf("  Range: %.1f  Vc: %.1f  Tgo: %.1f\n", R, Vc, tgo);
+            printf("  Terminal Phase: %s\n", terminal_phase ? "YES" : "NO");
+            printf("  LOS rates (xyz): %.3f, %.3f, %.3f\n", omega_x, omega_y, omega_z);
+            printf("  Perp velocity: %.1f, %.1f, %.1f\n", Vp_x, Vp_y, Vp_z);
+            float omega_mag = sqrtf(omega_x * omega_x + omega_y * omega_y + omega_z * omega_z);
+            printf("  LOS rate magnitude: %.3f rad/s\n", omega_mag);
+        }
 
-        // Limit speed.
+        // Augmented PN acceleration command with terminal guidance
+        float N = s->navigation_constant;
+        if (terminal_phase)
+        {
+            N *= 2.0f; // Double navigation gain in terminal phase
+        }
+        float Np = N + 1.0f;
+
+        // Base PN term
+        float acc_x = N * Vc * omega_x;
+        float acc_y = N * Vc * omega_y;
+        float acc_z = N * Vc * omega_z;
+
+        // Add target acceleration compensation
+        acc_x += 0.5f * Np * at_x;
+        acc_y += 0.5f * Np * at_y;
+        acc_z += 0.5f * Np * at_z;
+
+        // Add centripetal acceleration term
+        float v_mag = sqrtf(s->vx * s->vx + s->vy * s->vy + s->vz * s->vz);
+        if (v_mag > 1.0f)
+        {
+            float cent_factor = terminal_phase ? 1.5f : 1.0f; // Increase centripetal in terminal
+            float cent_x = cent_factor * (v_mag * v_mag) * los_x / R;
+            float cent_y = cent_factor * (v_mag * v_mag) * los_y / R;
+            float cent_z = cent_factor * (v_mag * v_mag) * los_z / R;
+            acc_x += cent_x;
+            acc_y += cent_y;
+            acc_z += cent_z;
+        }
+
+        // Add terminal guidance bias term to drive toward predicted collision
+        if (terminal_phase)
+        {
+            float pred_x = sim->aircraft.x + sim->aircraft.vx * tgo;
+            float pred_y = sim->aircraft.y + sim->aircraft.vy * tgo;
+            float pred_z = sim->aircraft.z + sim->aircraft.vz * tgo;
+
+            float bias_x = (pred_x - s->x) * 50.0f / R; // Scale bias by 50/R
+            float bias_y = (pred_y - s->y) * 50.0f / R;
+            float bias_z = (pred_z - s->z) * 50.0f / R;
+
+            acc_x += bias_x;
+            acc_y += bias_y;
+            acc_z += bias_z;
+        }
+
+        if (sim->ticks % 10 == 0)
+        {
+            float acc_mag = sqrtf(acc_x * acc_x + acc_y * acc_y + acc_z * acc_z);
+            printf("  Nav constants: N=%.1f, N'=%.1f\n", N, Np);
+            printf("  Acc command (xyz): %.1f, %.1f, %.1f (mag: %.1f)\n",
+                   acc_x, acc_y, acc_z, acc_mag);
+        }
+
+        // Update velocity using RK4 integration for better numerical stability
+        float k1_vx, k1_vy, k1_vz;
+        float k2_vx, k2_vy, k2_vz;
+        float k3_vx, k3_vy, k3_vz;
+        float k4_vx, k4_vy, k4_vz;
+        float dt = sim->dt;
+
+        // RK4 slopes
+        k1_vx = acc_x;
+        k1_vy = acc_y;
+        k1_vz = acc_z;
+
+        k2_vx = acc_x + 0.5f * dt * k1_vx;
+        k2_vy = acc_y + 0.5f * dt * k1_vy;
+        k2_vz = acc_z + 0.5f * dt * k1_vz;
+
+        k3_vx = acc_x + 0.5f * dt * k2_vx;
+        k3_vy = acc_y + 0.5f * dt * k2_vy;
+        k3_vz = acc_z + 0.5f * dt * k2_vz;
+
+        k4_vx = acc_x + dt * k3_vx;
+        k4_vy = acc_y + dt * k3_vy;
+        k4_vz = acc_z + dt * k3_vz;
+
+        // Update velocity
+        s->vx += (dt / 6.0f) * (k1_vx + 2 * k2_vx + 2 * k3_vx + k4_vx);
+        s->vy += (dt / 6.0f) * (k1_vy + 2 * k2_vy + 2 * k3_vy + k4_vy);
+        s->vz += (dt / 6.0f) * (k1_vz + 2 * k2_vz + 2 * k3_vz + k4_vz);
+
+        // Limit velocity magnitude
         float speed = sqrtf(s->vx * s->vx + s->vy * s->vy + s->vz * s->vz);
         if (speed > s->max_velocity)
         {
@@ -530,17 +636,15 @@ void step_seekers(AirSim *sim)
             s->vz *= scale;
         }
 
-        // Update position.
-        s->x += s->vx * sim->dt;
-        s->y += s->vy * sim->dt;
-        s->z += s->vz * sim->dt;
+        // Update position
+        s->x += s->vx * dt;
+        s->y += s->vy * dt;
+        s->z += s->vz * dt;
 
-        // Update elapsed time and check lifetime.
-        s->elapsed_time += sim->dt;
+        // Update lifetime
+        s->elapsed_time += dt;
         if (s->elapsed_time >= s->lifetime)
-        {
             s->active = false;
-        }
     }
 }
 
