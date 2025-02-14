@@ -282,7 +282,91 @@ SimConfig *load_config(const char *filename)
         }
     }
 
-    // (Further parsing of laser_types, seeker_types, and entity configurations follows similarly.)
+    // Add debug prints
+    printf("Loading config from %s\n", filename);
+
+    // Load seeker types
+    yaml_node_t *seeker_types = get_yaml_node(&document, root, "seeker_types");
+    if (seeker_types)
+    {
+        printf("Found seeker_types section\n");
+        for (int i = 0; i < seeker_types->data.mapping.pairs.top - seeker_types->data.mapping.pairs.start; i++)
+        {
+            yaml_node_pair_t *pair = seeker_types->data.mapping.pairs.start + i;
+            yaml_node_t *key_node = yaml_document_get_node(&document, pair->key);
+            yaml_node_t *value_node = yaml_document_get_node(&document, pair->value);
+
+            int type_idx = atoi((char *)key_node->data.scalar.value);
+            printf("Loading seeker type %d\n", type_idx);
+
+            if (type_idx > 0 && type_idx < 11)
+            {
+                config->seeker_types[type_idx].fov = get_yaml_float(&document, value_node, "fov", 30.0f);
+                config->seeker_types[type_idx].track_rate = get_yaml_float(&document, value_node, "track_rate", 100.0f);
+                config->seeker_types[type_idx].acceleration = get_yaml_float(&document, value_node, "acceleration", 400.0f);
+                config->seeker_types[type_idx].max_velocity = get_yaml_float(&document, value_node, "max_velocity", 1000.0f);
+                config->seeker_types[type_idx].lifetime = get_yaml_float(&document, value_node, "lifetime", 17.0f);
+                config->seeker_types[type_idx].navigation_constant = get_yaml_float(&document, value_node, "navigation_constant", 3.0f);
+            }
+        }
+    }
+
+    // Load laser types
+    yaml_node_t *laser_types = get_yaml_node(&document, root, "laser_types");
+    if (laser_types)
+    {
+        printf("Found laser_types section\n");
+        for (int i = 0; i < laser_types->data.mapping.pairs.top - laser_types->data.mapping.pairs.start; i++)
+        {
+            yaml_node_pair_t *pair = laser_types->data.mapping.pairs.start + i;
+            yaml_node_t *key_node = yaml_document_get_node(&document, pair->key);
+            yaml_node_t *value_node = yaml_document_get_node(&document, pair->value);
+
+            int type_idx = atoi((char *)key_node->data.scalar.value);
+            printf("Loading laser type %d\n", type_idx);
+
+            if (type_idx > 0 && type_idx < 11)
+            {
+                config->laser_types[type_idx].track_rate = get_yaml_float(&document, value_node, "track_rate", 60.0f);
+                config->laser_types[type_idx].fov = get_yaml_float(&document, value_node, "fov", 5.0f);
+                config->laser_types[type_idx].guidance_reduction = get_yaml_float(&document, value_node, "guidance_reduction", 5.0f);
+                config->laser_types[type_idx].maximum_range = get_yaml_float(&document, value_node, "maximum_range", 4000.0f);
+            }
+        }
+    }
+
+    // Load entities section (seekers and lasers)
+    yaml_node_t *entities = get_yaml_node(&document, root, "entities");
+    if (entities)
+    {
+        printf("Found entities section\n");
+
+        // Load seekers
+        yaml_node_t *seekers = get_yaml_node(&document, entities, "seekers");
+        if (seekers && seekers->type == YAML_SEQUENCE_NODE)
+        {
+            printf("Loading seekers array\n");
+            for (int i = 0; i < seekers->data.sequence.items.top - seekers->data.sequence.items.start && i < MAX_SEEKERS; i++)
+            {
+                yaml_node_t *seeker = yaml_document_get_node(&document, seekers->data.sequence.items.start[i]);
+                config->seekers[i] = get_yaml_int(&document, seeker, "type", 0);
+                printf("Loaded seeker %d: type=%d\n", i, config->seekers[i]);
+            }
+        }
+
+        // Load lasers
+        yaml_node_t *lasers = get_yaml_node(&document, entities, "lasers");
+        if (lasers && lasers->type == YAML_SEQUENCE_NODE)
+        {
+            printf("Loading lasers array\n");
+            for (int i = 0; i < lasers->data.sequence.items.top - lasers->data.sequence.items.start && i < MAX_LASERS; i++)
+            {
+                yaml_node_t *laser = yaml_document_get_node(&document, lasers->data.sequence.items.start[i]);
+                config->lasers[i] = get_yaml_int(&document, laser, "type", 0);
+                printf("Loaded laser %d: type=%d\n", i, config->lasers[i]);
+            }
+        }
+    }
 
 cleanup:
     yaml_document_delete(&document);
@@ -662,10 +746,18 @@ void step(AirSim *sim)
  */
 void reset(AirSim *sim)
 {
+    printf("\n=== Resetting Simulation ===\n");
+    printf("Config has:\n");
+    for (int i = 0; i < MAX_SEEKERS; i++)
+    {
+        printf("Seeker %d type: %d\n", i, sim->config.seekers[i]);
+    }
+
     sim->time = 0.0f;
     sim->ticks = 0;
     sim->terminal = false;
-    // Reset aircraft from config.
+
+    // Reset aircraft from config
     sim->aircraft.x = sim->config.aircraft_x;
     sim->aircraft.y = sim->config.aircraft_y;
     sim->aircraft.z = sim->config.aircraft_z;
@@ -673,12 +765,15 @@ void reset(AirSim *sim)
     sim->aircraft.vy = sim->config.aircraft_vy;
     sim->aircraft.vz = sim->config.aircraft_vz;
 
-    // Reset seekers.
+    printf("\nInitializing seekers:\n");
+    // Reset seekers
     for (int i = 0; i < MAX_SEEKERS; i++)
     {
         int t = sim->config.seekers[i];
+        printf("Seeker %d: config type=%d\n", i, t);
         if (t > 0)
         {
+            printf("  Activating seeker %d with type %d\n", i, t);
             sim->seekers[i].type = t;
             sim->seekers[i].fov = sim->config.seeker_types[t].fov;
             sim->seekers[i].track_rate = sim->config.seeker_types[t].track_rate;
@@ -688,11 +783,15 @@ void reset(AirSim *sim)
             sim->seekers[i].navigation_constant = sim->config.seeker_types[t].navigation_constant;
             sim->seekers[i].active = true;
             sim->seekers[i].elapsed_time = 0.0f;
+
+            // Position seekers relative to aircraft
             float angle = ((float)i - (MAX_SEEKERS / 2)) * 5.0f * DEG2RAD;
             float distance = 1000.0f;
             sim->seekers[i].x = sim->aircraft.x + distance * cosf(angle);
             sim->seekers[i].y = sim->aircraft.y + distance * sinf(angle);
             sim->seekers[i].z = sim->aircraft.z - 200.0f;
+
+            // Initialize velocities
             float dx = sim->aircraft.x - sim->seekers[i].x;
             float dy = sim->aircraft.y - sim->seekers[i].y;
             float dz = sim->aircraft.z - sim->seekers[i].z;
@@ -700,9 +799,15 @@ void reset(AirSim *sim)
             sim->seekers[i].vx = (dx / norm) * (sim->seekers[i].max_velocity * 0.5f);
             sim->seekers[i].vy = (dy / norm) * (sim->seekers[i].max_velocity * 0.5f);
             sim->seekers[i].vz = (dz / norm) * (sim->seekers[i].max_velocity * 0.5f);
+
+            printf("  Position=(%.1f, %.1f, %.1f)\n",
+                   sim->seekers[i].x, sim->seekers[i].y, sim->seekers[i].z);
+            printf("  Velocity=(%.1f, %.1f, %.1f)\n",
+                   sim->seekers[i].vx, sim->seekers[i].vy, sim->seekers[i].vz);
         }
         else
         {
+            printf("  Deactivating seeker %d\n", i);
             sim->seekers[i].active = false;
         }
     }
