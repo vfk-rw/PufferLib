@@ -10,7 +10,7 @@ entities:
   seekers:
     - type: 1
     - type: 1
-    - type: 0
+    - type: 2
     - type: 0
     - type: 0
     - type: 0
@@ -19,8 +19,8 @@ entities:
     - type: 0
     - type: 0
   lasers:
-    - type: 0
-    - type: 0
+    - type: 1
+    - type: 2
     - type: 0
     - type: 0
     - type: 0
@@ -33,6 +33,7 @@ seeker_types:
     max_velocity: 800.0    # Reduced from 1000
     lifetime: 17.0
     navigation_constant: 4.0  # Increased from 3
+    terminal_guidance_range: 500.0  # Added
   2:
     fov: 15.0
     track_rate: 90.0
@@ -40,15 +41,16 @@ seeker_types:
     max_velocity: 900.0    # Reduced from 1200
     lifetime: 17.0
     navigation_constant: 5.0  # Increased from 4
+    terminal_guidance_range: 600.0  # Added
 
 laser_types:
   1:
     track_rate: 100.0
     fov: 5.0
-    guidance_reduction: 5.0
+    guidance_reduction: 1.0
     maximum_range: 2000.0
   2:
     track_rate: 200.0
     fov: 10.0
-    guidance_reduction: 10.0
+    guidance_reduction: 5.0
     maximum_range: 3000.0

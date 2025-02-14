@@ -696,10 +696,14 @@ void step_lasers(AirSim *sim)
             // Check if target is within laser FOV and range.
             if (fabsf(az_diff) < l->fov && fabsf(el_diff) < l->fov && range <= l->maximum_range)
             {
+                
                 // Apply guidance reduction to the seeker: reduce its effective navigation constant.
                 target->navigation_constant *= (1.0f - l->guidance_reduction * sim->dt);
-                if (target->navigation_constant < 0.1f)
+                if (target->navigation_constant < 0.1f) {
                     target->navigation_constant = 0.1f;
+                    // seeker defeated - turn it inactive
+                    target->active = false;
+                }
             }
         }
     }
@@ -889,7 +893,7 @@ void reset(AirSim *sim)
             sim->seekers[i].elapsed_time = 0.0f;
 
             // Position seekers relative to aircraft
-            float angle = ((float)i - (MAX_SEEKERS / 2)) * 5.0f * DEG2RAD;
+            float angle = ((float)i - (MAX_SEEKERS / 2)) * 10.0f * DEG2RAD;
             float distance = 1000.0f;
             sim->seekers[i].x = sim->aircraft.x + distance * cosf(angle);
             sim->seekers[i].y = sim->aircraft.y + distance * sinf(angle);

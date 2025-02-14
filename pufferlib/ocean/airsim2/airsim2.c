@@ -256,7 +256,7 @@ void draw_threat_bracket(Vector2 pos, Color color)
                (Vector2){pos.x + size, pos.y + size / 2}, thickness, color);
 }
 
-// Improved seeker drawing with FOV arcs, direction indicators, and more info
+// Improved seeker drawing with FOV arcs and terminal guidance visualization
 void draw_seekers(Camera2D *cam, AirSim *sim, bool show_paths, int selected_seeker)
 {
     for (int i = 0; i < MAX_SEEKERS; i++)
@@ -266,91 +266,66 @@ void draw_seekers(Camera2D *cam, AirSim *sim, bool show_paths, int selected_seek
 
         Seeker *seeker = &sim->seekers[i];
 
-        // Get screen position relative to aircraft
+        // Get screen position and calculate distance
         Vector2 pos = GetWorldToScreen2D((Vector2){
                                              seeker->x - sim->aircraft.x,
                                              seeker->y - sim->aircraft.y},
                                          *cam);
 
-        // Draw FOV arc
+        float dist = compute_distance(
+            seeker->x, seeker->y, seeker->z,
+            sim->aircraft.x, sim->aircraft.y, sim->aircraft.z);
+
+        // Draw heading triangle
         float heading = atan2f(seeker->vy, seeker->vx) * RAD2DEG;
-        float fov_rad = seeker->fov * DEG2RAD;
-        float engagement_range = 2000.0f * cam->zoom; // Arbitrary engagement range for visualization
-
-        Color fov_fill = (Color){255, 0, 0, 32};
-        Color fov_line = (Color){255, 0, 0, 128};
-
-        DrawCircleSector(pos, engagement_range * 0.2f,
-                         heading - seeker->fov,
-                         heading + seeker->fov,
-                         32, fov_fill);
-        DrawCircleSectorLines(pos, engagement_range * 0.2f,
-                              heading - seeker->fov,
-                              heading + seeker->fov,
-                              32, fov_line);
-
-        // Draw direction triangle
         float size = 15.0f;
         Vector2 dir = {
             cosf(heading * DEG2RAD) * size,
             sinf(heading * DEG2RAD) * size};
-
         Vector2 v1 = {pos.x + dir.x, pos.y + dir.y};
         Vector2 v2 = {pos.x - dir.x / 2 - dir.y / 2, pos.y - dir.y / 2 + dir.x / 2};
         Vector2 v3 = {pos.x - dir.x / 2 + dir.y / 2, pos.y - dir.y / 2 - dir.x / 2};
 
+        float engagement_range = 2000.0f * cam->zoom; // Arbitrary engagement range for visualization
+
+        // Draw terminal guidance circle if within range
+        float terminal_range = 50.0f;
+        if (dist < terminal_range)
+        {
+            Color terminal_color = (Color){255, 0, 0, 64};
+            DrawCircle(pos.x, pos.y, terminal_range * cam->zoom, terminal_color);
+            DrawCircleLines(pos.x, pos.y, terminal_range * cam->zoom, RED);
+        }
+        else
+        {
+            // draw FOV arc
+            float nav_alpha = (seeker->navigation_constant / sim->config.seeker_types[seeker->type].navigation_constant) * 64;
+            Color fov_fill = (Color){255, 0, 0, (unsigned char)nav_alpha};
+            Color fov_line = (Color){255, 0, 0, 128};
+
+            DrawCircleSector(pos, engagement_range * 0.2f,
+                             heading - seeker->fov,
+                             heading + seeker->fov,
+                             32, fov_fill);
+            DrawCircleSectorLines(pos, engagement_range * 0.2f,
+                                  heading - seeker->fov,
+                                  heading + seeker->fov,
+                                  32, fov_line);
+        }
+
         DrawTriangle(v1, v2, v3, RED);
         DrawTriangleLines(v1, v2, v3, MAROON);
 
-        // Draw selection bracket if this is the selected threat
         if (i == selected_seeker)
         {
             draw_threat_bracket(pos, MAROON);
         }
 
         // Draw info text
-        float dist = compute_distance(
-            seeker->x, seeker->y, seeker->z,
-            sim->aircraft.x, sim->aircraft.y, sim->aircraft.z);
-
-        DrawText(TextFormat("#%d  %.0fm  %.0fz",
-                            i + 1, dist, seeker->z),
+        DrawText(TextFormat("#%d  %.0fm  %.0fz", i + 1, dist, seeker->z),
                  pos.x + 20, pos.y - 20, 20, BLACK);
-
         DrawText(TextFormat("%.1fs", seeker->lifetime - seeker->elapsed_time),
                  pos.x + 20, pos.y + 5, 20, BLACK);
-
-        // Draw predicted path if enabled
-        if (show_paths)
-        {
-            Vector2 last_pos = pos;
-            float pred_x = seeker->x;
-            float pred_y = seeker->y;
-            float pred_z = seeker->z;
-            float pred_vx = seeker->vx;
-            float pred_vy = seeker->vy;
-            float pred_vz = seeker->vz;
-
-            for (int j = 0; j < 60; j++)
-            {
-                pred_x += pred_vx * sim->dt;
-                pred_y += pred_vy * sim->dt;
-                pred_z += pred_vz * sim->dt;
-
-                Vector2 curr_pos = GetWorldToScreen2D((Vector2){
-                                                          pred_x - sim->aircraft.x,
-                                                          pred_y - sim->aircraft.y},
-                                                      *cam);
-
-                if (j % 2 == 0)
-                { // Draw dashed line
-                    float alpha = 1.0f - (float)j / 60.0f;
-                    DrawLineEx(last_pos, curr_pos, 2,
-                               (Color){255, 0, 0, (unsigned char)(255 * alpha)});
-                }
-                last_pos = curr_pos;
-            }
-        }
     }
 }
 
