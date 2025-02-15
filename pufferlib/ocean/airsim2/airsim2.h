@@ -680,6 +680,8 @@ void step_lasers(AirSim *sim)
             // Slew current laser angles toward target angles.
             float az_diff = target_az - l->az;
             float el_diff = target_el - l->el;
+            float delta_az = fabsf(az_diff);
+            float delta_el = fabsf(el_diff);
             // Limit by track_rate.
             float max_angle_change = l->track_rate * sim->dt;
             if (fabsf(az_diff) > max_angle_change)
@@ -694,12 +696,14 @@ void step_lasers(AirSim *sim)
             l->el += el_diff;
 
             // Check if target is within laser FOV and range.
-            if (fabsf(az_diff) < l->fov && fabsf(el_diff) < l->fov && range <= l->maximum_range)
+            if (delta_az < l->fov && delta_el < l->fov && ground_dist <= l->maximum_range)
             {
-                
+                // print az and el diff for debugging
+                printf("Laser %d: delta_az=%.2f, delta_el=%.2f\n", i, delta_az, delta_el);
                 // Apply guidance reduction to the seeker: reduce its effective navigation constant.
                 target->navigation_constant *= (1.0f - l->guidance_reduction * sim->dt);
-                if (target->navigation_constant < 0.1f) {
+                if (target->navigation_constant < 0.1f)
+                {
                     target->navigation_constant = 0.1f;
                     // seeker defeated - turn it inactive
                     target->active = false;

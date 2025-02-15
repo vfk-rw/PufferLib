@@ -33,6 +33,7 @@ typedef struct GameState
     bool laser_view[MAX_LASERS]; // one flag per laser
     Camera2D camera;
     float zoom_target;
+    bool auto_policy; // New flag for automated policy
 } GameState;
 
 // Forward declarations for UI drawing functions
@@ -69,6 +70,7 @@ void reset_ui_state(GameState *state)
     state->camera.rotation = 0.0f;
     state->camera.zoom = PIXELS_PER_METER * 4.0f;
     state->zoom_target = state->camera.zoom;
+    state->auto_policy = false;
 }
 
 // Draw help panel overlay listing all commands
@@ -350,6 +352,147 @@ void draw_aircraft(Camera2D *cam, AirSim *sim)
     DrawTriangleLines(v1, v2, v3, DARKBLUE);
 }
 
+// Add helper function to calculate time to intercept for a seeker
+float calculate_time_to_intercept(Seeker *seeker, Aircraft *aircraft)
+{
+    float dx = aircraft->x - seeker->x;
+    float dy = aircraft->y - seeker->y;
+    float dz = aircraft->z - seeker->z;
+    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+
+    // Calculate relative velocity
+    float vx = aircraft->vx - seeker->vx;
+    float vy = aircraft->vy - seeker->vy;
+    float vz = aircraft->vz - seeker->vz;
+    float closing_speed = -(dx * vx + dy * vy + dz * vz) / dist; // Negative because we want closing speed
+
+    if (closing_speed <= 0)
+        return 999999.0f; // Not closing
+    return dist / closing_speed;
+}
+
+// Add helper function to calculate angular difference for a laser to a threat
+typedef struct AngularDiff
+{
+    float az_diff;
+    float el_diff;
+    float total_diff;
+} AngularDiff;
+
+AngularDiff calculate_angular_diff(Laser *laser, float tx, float ty, float tz, Aircraft *aircraft)
+{
+    AngularDiff result;
+
+    // Calculate target angles
+    float dx = tx - aircraft->x;
+    float dy = ty - aircraft->y;
+    float dz = tz - aircraft->z;
+    float ground_dist = sqrtf(dx * dx + dy * dy);
+
+    float target_az = atan2f(dy, dx) * RAD2DEG;
+    float target_el = atan2f(dz, ground_dist) * RAD2DEG;
+
+    // Calculate differences (accounting for angle wrap-around)
+    result.az_diff = fabsf(fmodf(target_az - laser->az + 180, 360) - 180);
+    result.el_diff = fabsf(target_el - laser->el);
+    result.total_diff = result.az_diff + result.el_diff;
+
+    return result;
+}
+
+// Add policy execution function
+void execute_policy(AirSim *sim)
+{
+    // Reset all laser assignments
+    for (int i = 0; i < MAX_LASERS; i++)
+    {
+        sim->actions[i] = -1;
+    }
+
+    // Calculate time to intercept for all active threats
+    typedef struct ThreatInfo
+    {
+        int idx;
+        float time_to_intercept;
+        bool assigned;
+    } ThreatInfo;
+
+    ThreatInfo threats[MAX_SEEKERS];
+    int threat_count = 0;
+
+    for (int i = 0; i < MAX_SEEKERS; i++)
+    {
+        if (sim->seekers[i].active)
+        {
+            threats[threat_count].idx = i;
+            threats[threat_count].time_to_intercept = calculate_time_to_intercept(&sim->seekers[i], &sim->aircraft);
+            threats[threat_count].assigned = false;
+            threat_count++;
+        }
+    }
+
+    // Sort threats by time to intercept
+    for (int i = 0; i < threat_count - 1; i++)
+    {
+        for (int j = 0; j < threat_count - i - 1; j++)
+        {
+            if (threats[j].time_to_intercept > threats[j + 1].time_to_intercept)
+            {
+                ThreatInfo temp = threats[j];
+                threats[j] = threats[j + 1];
+                threats[j + 1] = temp;
+            }
+        }
+    }
+
+    // First pass: assign all available lasers to immediate threats (< 3 seconds)
+    for (int t = 0; t < threat_count; t++)
+    {
+        if (threats[t].time_to_intercept < 3.0f)
+        {
+            // Assign all available lasers to this threat
+            for (int l = 0; l < MAX_LASERS; l++)
+            {
+                if (sim->lasers[l].type > 0)
+                {
+                    sim->actions[l] = threats[t].idx;
+                }
+            }
+            return; // Exit immediately since we're using all lasers
+        }
+    }
+
+    // Second pass: assign one laser per threat, matching closest angles
+    for (int t = 0; t < threat_count; t++)
+    {
+        float best_diff = 999999.0f;
+        int best_laser = -1;
+
+        // Find closest unassigned laser
+        for (int l = 0; l < MAX_LASERS; l++)
+        {
+            if (sim->lasers[l].type > 0 && sim->actions[l] == -1)
+            {
+                Seeker *seeker = &sim->seekers[threats[t].idx];
+                AngularDiff diff = calculate_angular_diff(&sim->lasers[l],
+                                                          seeker->x, seeker->y, seeker->z,
+                                                          &sim->aircraft);
+                if (diff.total_diff < best_diff)
+                {
+                    best_diff = diff.total_diff;
+                    best_laser = l;
+                }
+            }
+        }
+
+        // Assign best laser if found
+        if (best_laser >= 0)
+        {
+            sim->actions[best_laser] = threats[t].idx;
+        }
+    }
+}
+
 // Main simulation and visualization loop
 int main(int argc, char **argv)
 {
@@ -497,6 +640,19 @@ int main(int argc, char **argv)
         }
         // MMB and Mouse Wheel for Pan/Zoom Camera.
         update_camera(&state);
+
+        // Add F3 handling after other F-key checks
+        if (IsKeyPressed(KEY_F3))
+        {
+            state.auto_policy = !state.auto_policy;
+            printf("Auto policy: %s\n", state.auto_policy ? "ON" : "OFF");
+        }
+
+        // Add policy execution before simulation step
+        if (!state.paused && !sim.terminal && state.auto_policy)
+        {
+            execute_policy(&sim);
+        }
 
         // Automatically step simulation if not paused and simulation not terminal.
         if (!state.paused && !sim.terminal)
