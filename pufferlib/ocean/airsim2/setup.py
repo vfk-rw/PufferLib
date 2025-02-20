@@ -17,8 +17,8 @@ else:
 
 extensions = [
     Extension(
-        "cy_airsim",
-        ["cy_airsim.pyx", "log.c"],  # Added log.c to sources
+        "cy_airsim2",
+        ["cy_airsim2.pyx", "log.c"],  # Added log.c to sources
         include_dirs=[np.get_include(), ".", "../../../raylib/include"],
         library_dirs=[raylib_path],
         libraries=["raylib", "m", "pthread", "yaml"],

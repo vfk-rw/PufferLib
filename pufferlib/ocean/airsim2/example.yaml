@@ -1,7 +1,7 @@
 simulation:
   dt: 0.01
   max_time: 20.0
-  max_steps: 60000
+  max_steps: 2000
   aircraft:
     position: [0.0, 0.0, 1000.0]
     velocity: [100.0, 0.0, 0.0]

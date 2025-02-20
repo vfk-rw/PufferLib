@@ -15,6 +15,7 @@
 #define MAX_LASERS 5
 #define LOG_BUFFER_SIZE 1024
 
+#undef DEBUG_PRINT
 // Forward declare log functions
 LogBuffer *allocate_logbuffer(int size);
 void free_logbuffer(LogBuffer *buffer);
@@ -258,7 +259,11 @@ SimConfig *load_config(const char *filename)
         config->dt = get_yaml_float(&document, sim_node, "dt", 0.001f);
         config->max_time = get_yaml_float(&document, sim_node, "max_time", 60.0f);
         config->max_steps = get_yaml_int(&document, sim_node, "max_steps", 60000);
-
+        // Print simulation settings
+        printf("Loaded simulation settings:\n");
+        printf("  dt: %.3f\n", config->dt);
+        printf("  max_time: %.1f\n", config->max_time);
+        printf("  max_steps: %d\n", config->max_steps);
         // Load aircraft settings.
         yaml_node_t *ac_node = get_yaml_node(&document, sim_node, "aircraft");
         if (ac_node)
@@ -746,7 +751,12 @@ void process_actions(AirSim *sim)
 bool check_terminal(AirSim *sim)
 {
     if (sim->time >= sim->max_time || sim->ticks >= sim->max_steps)
+    {
+#ifdef DEBUG_PRINT
+        printf("Simulation terminated: time=%.2f, max_time=%.2f, ticks=%d, max_steps=%d\n", sim->time, sim->max_time, sim->ticks, sim->max_steps);
+#endif
         return true;
+    }
     for (int i = 0; i < MAX_SEEKERS; i++)
     {
         if (sim->seekers[i].active)
@@ -842,7 +852,7 @@ void step(AirSim *sim)
     step_seekers(sim);
     step_lasers(sim);
     compute_reward(sim);
-    sim->terminal = check_terminal(sim);
+    sim->terminals[0] = check_terminal(sim);
     update_observations(sim);
     sim->time += sim->dt;
     sim->ticks += 1;
@@ -858,13 +868,14 @@ void step(AirSim *sim)
  */
 void reset(AirSim *sim)
 {
+#ifdef DEBUG_PRINT
     printf("\n=== Resetting Simulation ===\n");
     printf("Config has:\n");
     for (int i = 0; i < MAX_SEEKERS; i++)
     {
         printf("Seeker %d type: %d\n", i, sim->config.seekers[i]);
     }
-
+#endif
     sim->time = 0.0f;
     sim->ticks = 0;
     sim->terminal = false;
@@ -877,15 +888,15 @@ void reset(AirSim *sim)
     sim->aircraft.vy = sim->config.aircraft_vy;
     sim->aircraft.vz = sim->config.aircraft_vz;
 
-    printf("\nInitializing seekers:\n");
-    // Reset seekers
+    // printf("\nInitializing seekers:\n");
+    //  Reset seekers
     for (int i = 0; i < MAX_SEEKERS; i++)
     {
         int t = sim->config.seekers[i];
-        printf("Seeker %d: config type=%d\n", i, t);
+        // printf("Seeker %d: config type=%d\n", i, t);
         if (t > 0)
         {
-            printf("  Activating seeker %d with type %d\n", i, t);
+            // printf("  Activating seeker %d with type %d\n", i, t);
             sim->seekers[i].type = t;
             sim->seekers[i].fov = sim->config.seeker_types[t].fov;
             sim->seekers[i].track_rate = sim->config.seeker_types[t].track_rate;
@@ -911,15 +922,16 @@ void reset(AirSim *sim)
             sim->seekers[i].vx = (dx / norm) * (sim->seekers[i].max_velocity * 0.5f);
             sim->seekers[i].vy = (dy / norm) * (sim->seekers[i].max_velocity * 0.5f);
             sim->seekers[i].vz = (dz / norm) * (sim->seekers[i].max_velocity * 0.5f);
-
+#ifdef DEBUG_PRINT
             printf("  Position=(%.1f, %.1f, %.1f)\n",
                    sim->seekers[i].x, sim->seekers[i].y, sim->seekers[i].z);
             printf("  Velocity=(%.1f, %.1f, %.1f)\n",
                    sim->seekers[i].vx, sim->seekers[i].vy, sim->seekers[i].vz);
+#endif
         }
         else
         {
-            printf("  Deactivating seeker %d\n", i);
+            // printf("  Deactivating seeker %d\n", i);
             sim->seekers[i].active = false;
         }
     }

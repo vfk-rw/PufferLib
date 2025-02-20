@@ -18,7 +18,7 @@ cdef extern from "log.h":
     void free_logbuffer(LogBuffer*)
     Log aggregate_and_clear(LogBuffer*)
 
-cdef extern from "airsim.h":
+cdef extern from "airsim2.h":
     ctypedef struct AirSim:
         float* observations
         int* actions
@@ -34,6 +34,12 @@ cdef extern from "airsim.h":
     void reset(AirSim* sim)
     void step(AirSim* sim)
 
+    ctypedef struct SimConfig:
+        pass
+    SimConfig* load_config(const char* filename)
+    void apply_config(AirSim* sim, SimConfig* config)
+    void free_allocated(AirSim* sim)
+
 cdef class CyAirSim:
     cdef:
         AirSim* envs
@@ -45,7 +51,8 @@ cdef class CyAirSim:
                  int[:, :] actions,
                  float[:] rewards,
                  unsigned char[:] terminals,
-                 int num_envs=1):
+                 int num_envs=1,
+                 str config_file="example.yaml"):
 
         if num_envs <= 0 or num_envs > 1000:
             raise ValueError("num_envs must be between 1 and 1000")
@@ -55,10 +62,17 @@ cdef class CyAirSim:
         if self.logs == NULL:
             raise MemoryError("Failed to allocate log buffer")
 
+        # Load config file
+        cdef SimConfig* config = load_config(config_file.encode('utf-8'))
+        if config == NULL:
+            free_logbuffer(self.logs)
+            raise RuntimeError(f"Failed to load config file: {config_file}")
+
         # Just allocate the array of AirSim structs
         self.envs = <AirSim*>calloc(num_envs, sizeof(AirSim))
         if self.envs == NULL:
             free_logbuffer(self.logs)
+            free(config)
             raise MemoryError("Failed to allocate AirSim environments")
 
         # Initialize each environment with pointers to numpy arrays
@@ -69,7 +83,13 @@ cdef class CyAirSim:
             self.envs[i].rewards = &rewards[i]
             self.envs[i].terminals = &terminals[i]
             self.envs[i].log_buffer = self.logs
+            
+            # Apply config to each environment
+            apply_config(&self.envs[i], config)
             init(&self.envs[i])
+
+        # Free the config after applying to all environments
+        free(config)
 
     def __dealloc__(self):
         if self.envs != NULL:
