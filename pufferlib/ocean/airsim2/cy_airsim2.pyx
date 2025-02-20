@@ -39,6 +39,13 @@ cdef extern from "airsim2.h":
     SimConfig* load_config(const char* filename)
     void apply_config(AirSim* sim, SimConfig* config)
     void free_allocated(AirSim* sim)
+    
+    void reset_aircraft_pos(AirSim *sim, float x, float y, float z)
+    void reset_aircraft_vel(AirSim *sim, float vx, float vy, float vz)
+    void reset_seeker(AirSim *sim, int idx, int type, float x, float y, float z, float vx, float vy, float vz)
+    void reset_laser(AirSim *sim, int idx, int type, float az, float el)
+    void apply_seeker_type_config(AirSim *sim, int type, float fov, float track_rate, float acceleration, float max_velocity, float lifetime, float nav_const)
+    void apply_laser_type_config(AirSim *sim, int type, float track_rate, float fov, float guidance_reduction, float maximum_range)
 
 cdef class CyAirSim:
     cdef:
@@ -120,3 +127,25 @@ cdef class CyAirSim:
     def sim(self):
         # Make the pointer accessible but not the struct itself
         return <size_t><void*>&self.envs[0]
+
+    def set_aircraft_pos(self, float x, float y, float z):
+        reset_aircraft_pos(&self.envs[0], x, y, z)
+        
+    def set_aircraft_vel(self, float vx, float vy, float vz):
+        reset_aircraft_vel(&self.envs[0], vx, vy, vz)
+        
+    def set_seeker(self, int idx, int type, float x, float y, float z, float vx, float vy, float vz):
+        reset_seeker(&self.envs[0], idx, type, x, y, z, vx, vy, vz)
+        
+    def set_laser(self, int idx, int type, float az, float el):
+        reset_laser(&self.envs[0], idx, type, az, el)
+        
+    def configure_seeker_type(self, int type, float fov, float track_rate, float acceleration, 
+                            float max_velocity, float lifetime, float nav_const):
+        apply_seeker_type_config(&self.envs[0], type, fov, track_rate, acceleration, 
+                               max_velocity, lifetime, nav_const)
+        
+    def configure_laser_type(self, int type, float track_rate, float fov, 
+                           float guidance_reduction, float maximum_range):
+        apply_laser_type_config(&self.envs[0], type, track_rate, fov, 
+                              guidance_reduction, maximum_range)

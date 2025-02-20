@@ -965,6 +965,134 @@ void reset(AirSim *sim)
     sim->log_buffer->idx = 0;
 }
 
+// New configuration interface functions
+void reset_aircraft_pos(AirSim *sim, float x, float y, float z)
+{
+    sim->aircraft.x = x;
+    sim->aircraft.y = y;
+    sim->aircraft.z = z;
+    update_observations(sim);
+}
+
+void reset_aircraft_vel(AirSim *sim, float vx, float vy, float vz)
+{
+    sim->aircraft.vx = vx;
+    sim->aircraft.vy = vy;
+    sim->aircraft.vz = vz;
+    update_observations(sim);
+}
+
+void reset_seeker(AirSim *sim, int idx, int type, float x, float y, float z, float vx, float vy, float vz)
+{
+    if (idx < 0 || idx >= MAX_SEEKERS)
+        return;
+
+    Seeker *s = &sim->seekers[idx];
+    if (type > 0)
+    {
+        s->type = type;
+        s->fov = sim->config.seeker_types[type].fov;
+        s->track_rate = sim->config.seeker_types[type].track_rate;
+        s->acceleration = sim->config.seeker_types[type].acceleration;
+        s->max_velocity = sim->config.seeker_types[type].max_velocity;
+        s->lifetime = sim->config.seeker_types[type].lifetime;
+        s->navigation_constant = sim->config.seeker_types[type].navigation_constant;
+        s->active = true;
+        s->elapsed_time = 0.0f;
+    }
+    else
+    {
+        s->active = false;
+    }
+
+    s->x = x;
+    s->y = y;
+    s->z = z;
+    s->vx = vx;
+    s->vy = vy;
+    s->vz = vz;
+
+    update_observations(sim);
+}
+
+void reset_laser(AirSim *sim, int idx, int type, float az, float el)
+{
+    if (idx < 0 || idx >= MAX_LASERS)
+        return;
+
+    Laser *l = &sim->lasers[idx];
+    if (type > 0)
+    {
+        l->type = type;
+        l->track_rate = sim->config.laser_types[type].track_rate;
+        l->fov = sim->config.laser_types[type].fov;
+        l->guidance_reduction = sim->config.laser_types[type].guidance_reduction;
+        l->maximum_range = sim->config.laser_types[type].maximum_range;
+    }
+    else
+    {
+        l->type = 0;
+    }
+
+    l->engaging_seeker = -1;
+    l->az = az;
+    l->el = el;
+
+    update_observations(sim);
+}
+
+void apply_seeker_type_config(AirSim *sim, int type, float fov, float track_rate, float acceleration,
+                              float max_velocity, float lifetime, float nav_const)
+{
+    if (type <= 0 || type >= 11)
+        return;
+
+    sim->config.seeker_types[type].fov = fov;
+    sim->config.seeker_types[type].track_rate = track_rate;
+    sim->config.seeker_types[type].acceleration = acceleration;
+    sim->config.seeker_types[type].max_velocity = max_velocity;
+    sim->config.seeker_types[type].lifetime = lifetime;
+    sim->config.seeker_types[type].navigation_constant = nav_const;
+
+    // Update any active seekers of this type
+    for (int i = 0; i < MAX_SEEKERS; i++)
+    {
+        if (sim->seekers[i].active && sim->seekers[i].type == type)
+        {
+            sim->seekers[i].fov = fov;
+            sim->seekers[i].track_rate = track_rate;
+            sim->seekers[i].acceleration = acceleration;
+            sim->seekers[i].max_velocity = max_velocity;
+            sim->seekers[i].lifetime = lifetime;
+            sim->seekers[i].navigation_constant = nav_const;
+        }
+    }
+}
+
+void apply_laser_type_config(AirSim *sim, int type, float track_rate, float fov,
+                             float guidance_reduction, float maximum_range)
+{
+    if (type <= 0 || type >= 11)
+        return;
+
+    sim->config.laser_types[type].track_rate = track_rate;
+    sim->config.laser_types[type].fov = fov;
+    sim->config.laser_types[type].guidance_reduction = guidance_reduction;
+    sim->config.laser_types[type].maximum_range = maximum_range;
+
+    // Update any active lasers of this type
+    for (int i = 0; i < MAX_LASERS; i++)
+    {
+        if (sim->lasers[i].type == type)
+        {
+            sim->lasers[i].track_rate = track_rate;
+            sim->lasers[i].fov = fov;
+            sim->lasers[i].guidance_reduction = guidance_reduction;
+            sim->lasers[i].maximum_range = maximum_range;
+        }
+    }
+}
+
 /**
  * Allocate memory for simulation buffers.
  */

@@ -4,6 +4,108 @@ import time
 import pufferlib
 from cy_airsim2 import CyAirSim
 
+class SimConfig:
+    def __init__(self, env):
+        self.env = env
+        self._c_env = env.c_env
+
+    @property
+    def aircraft(self):
+        return AircraftConfig(self._c_env)
+    
+    @property
+    def seekers(self):
+        return SeekerConfig(self._c_env)
+    
+    @property
+    def lasers(self):
+        return LaserConfig(self._c_env)
+
+class AircraftConfig:
+    def __init__(self, c_env):
+        self._c_env = c_env
+        
+    def set_position(self, x, y, z):
+        self._c_env.set_aircraft_pos(x, y, z)
+        
+    def set_velocity(self, vx, vy, vz):
+        self._c_env.set_aircraft_vel(vx, vy, vz)
+
+class SeekerConfig:
+    def __init__(self, c_env):
+        self._c_env = c_env
+    
+    def set_type_params(self, type_id, fov=None, track_rate=None, acceleration=None,
+                       max_velocity=None, lifetime=None, nav_const=None):
+        """Update seeker type parameters"""
+        # Default values if not provided
+        defaults = {
+            'fov': 30.0,
+            'track_rate': 100.0,
+            'acceleration': 400.0,
+            'max_velocity': 1000.0,
+            'lifetime': 17.0,
+            'nav_const': 3.0
+        }
+        
+        params = {
+            'fov': fov if fov is not None else defaults['fov'],
+            'track_rate': track_rate if track_rate is not None else defaults['track_rate'],
+            'acceleration': acceleration if acceleration is not None else defaults['acceleration'],
+            'max_velocity': max_velocity if max_velocity is not None else defaults['max_velocity'],
+            'lifetime': lifetime if lifetime is not None else defaults['lifetime'],
+            'nav_const': nav_const if nav_const is not None else defaults['nav_const']
+        }
+        
+        self._c_env.configure_seeker_type(
+            type_id, 
+            params['fov'],
+            params['track_rate'],
+            params['acceleration'],
+            params['max_velocity'],
+            params['lifetime'],
+            params['nav_const']
+        )
+    
+    def set_seeker(self, idx, type_id, pos=(0,0,0), vel=(0,0,0)):
+        """Configure a specific seeker instance"""
+        x,y,z = pos
+        vx,vy,vz = vel
+        self._c_env.set_seeker(idx, type_id, x, y, z, vx, vy, vz)
+
+class LaserConfig:
+    def __init__(self, c_env):
+        self._c_env = c_env
+    
+    def set_type_params(self, type_id, track_rate=None, fov=None, 
+                       guidance_reduction=None, maximum_range=None):
+        """Update laser type parameters"""
+        defaults = {
+            'track_rate': 60.0,
+            'fov': 5.0,
+            'guidance_reduction': 5.0,
+            'maximum_range': 4000.0
+        }
+        
+        params = {
+            'track_rate': track_rate if track_rate is not None else defaults['track_rate'],
+            'fov': fov if fov is not None else defaults['fov'],
+            'guidance_reduction': guidance_reduction if guidance_reduction is not None else defaults['guidance_reduction'],
+            'maximum_range': maximum_range if maximum_range is not None else defaults['maximum_range']
+        }
+        
+        self._c_env.configure_laser_type(
+            type_id,
+            params['track_rate'],
+            params['fov'],
+            params['guidance_reduction'],
+            params['maximum_range']
+        )
+    
+    def set_laser(self, idx, type_id, az=0.0, el=0.0):
+        """Configure a specific laser instance"""
+        self._c_env.set_laser(idx, type_id, az, el)
+
 class AirDefense(pufferlib.PufferEnv):
     def __init__(
         self,
@@ -38,10 +140,13 @@ class AirDefense(pufferlib.PufferEnv):
             num_envs=num_envs,
             config_file=config_file  # Pass config file to CyAirSim
         )
+        self.config = SimConfig(self)
+
 
     def reset(self, seed=None):
         self.tick = 0
         self.c_env.reset()
+        self.config.seekers.set_seeker(3, type_id=1, pos=(10,0,1000), vel=(200,0,0))
         return self.observations, []
 
     def step(self, actions):
